@@ -24,7 +24,7 @@ public class UpsHid {
     IntPtr h = CreateFileW(path, 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
     if (h.ToInt64() == -1) return "ERR:open:" + Marshal.GetLastWin32Error();
     HidD_FlushQueue(h);
-    byte[] raw = Encoding.ASCII.GetBytes(cmd + "\r");
+    byte[] raw = Encoding.GetEncoding(28591).GetBytes(cmd + "\r");
     for (int off = 0; off < raw.Length; off += 8) {
       byte[] rep = new byte[9];
       for (int k = 0; k < 8 && off + k < raw.Length; k++) rep[k+1] = raw[off+k];
@@ -119,4 +119,31 @@ function Get-UpsStatus {
     WarningRaw       = $qws
     HasWarning       = $faulted
   }
+}
+
+# --- CRC16-CCITT (XMODEM) theo chuan Megatec/Voltronic -----------------------
+# Poly 0x1021, init 0x0000. Byte CRC nao roi vao 0x28 '(' / 0x0D CR / 0x0A LF
+# thi phai +1 (quy uoc cua giao thuc, tranh lan voi ky tu dong khung).
+function Get-VoltronicCrc {
+  param([Parameter(Mandatory)][string]$Text)
+  $crc = 0
+  foreach ($b in [System.Text.Encoding]::GetEncoding(28591).GetBytes($Text)) {
+    $crc = ($crc -bxor ([int]$b -shl 8)) -band 0xFFFF
+    for ($i = 0; $i -lt 8; $i++) {
+      if ($crc -band 0x8000) { $crc = ((($crc -shl 1) -band 0xFFFF) -bxor 0x1021) }
+      else                   { $crc = ($crc -shl 1) -band 0xFFFF }
+    }
+  }
+  $hi = ($crc -shr 8) -band 0xFF
+  $lo = $crc -band 0xFF
+  if ($hi -in 0x28, 0x0D, 0x0A) { $hi++ }
+  if ($lo -in 0x28, 0x0D, 0x0A) { $lo++ }
+  , @([byte]$hi, [byte]$lo)
+}
+
+function Invoke-UpsCommandCrc {
+  param([Parameter(Mandatory)][string]$Command, [int]$TimeoutMs = 2500)
+  $c = Get-VoltronicCrc $Command
+  $full = $Command + [char]$c[0] + [char]$c[1]
+  Invoke-UpsCommand $full $TimeoutMs
 }

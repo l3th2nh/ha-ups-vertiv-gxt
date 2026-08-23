@@ -338,3 +338,48 @@ Hai điều kiện phía BIOS/Windows cần kiểm tra thêm:
 - Windows: **tắt Fast Startup** (Control Panel → Power Options → Choose what the power
   buttons do). Fast Startup khiến máy vào trạng thái hybrid và thường làm WoL từ trạng
   thái tắt hẳn không hoạt động.
+
+---
+
+# Ổ cắm lập trình được (PROGRAMMABLE OUTLETS P1)
+
+Mặt sau UPS có **hai dãy ổ**:
+
+| Dãy | Nhãn | Hành vi |
+|---|---|---|
+| Trái (3 ổ C13) | `OUTPUT` | **Luôn có điện** khi UPS chạy |
+| Phải (3 ổ) | `PROGRAMMABLE OUTLETS (P1)` | **Tự ngắt sau một khoảng chạy pin** để dành pin cho tải quan trọng |
+
+## Lệnh đã kiểm chứng thực tế
+
+| Lệnh | Phản hồi | Tác dụng |
+|---|---|---|
+| `QSK1` | `(1` / `(0` | Đọc trạng thái P1 (1 = đang bật) |
+| `SKON1` | `(ACK` | **Bật P1** — đã xác nhận chạy đúng |
+| `SKOFF1` | (chưa thử) | Tắt P1 — cùng họ lệnh |
+
+> Chỉ có `QSK1` tồn tại. `QSK2`/`QSK3`/`QSK4` đều trả `(NAK` → UPS này chỉ có **một** nhóm ổ lập trình được.
+
+## Quy ước phản hồi của firmware này
+
+Đây là điểm quan trọng để đọc log về sau:
+
+- **`(ACK`** = lệnh ghi được chấp nhận và đã thực thi
+- **`(NAK`** = lệnh bị từ chối, **không** có tác dụng gì
+
+`SKON1` trả `(ACK`, còn `PDa` / `PEa` / mọi lệnh kèm CRC đều trả `(NAK`.
+Vì vậy họ lệnh `PE`/`PD` thực sự không được firmware hỗ trợ và không đổi được gì.
+
+## ⚠️ CẢNH BÁO BỐ TRÍ TẢI
+
+**KHÔNG cắm máy tính (hoặc NAS, hoặc bất kỳ thiết bị nào cần tắt êm) vào dãy P1.**
+
+P1 được thiết kế để **tự ngắt khi chạy pin**. Cắm máy tính vào đó thì mỗi lần mất điện,
+máy sẽ bị **cắt điện đột ngột** sau vài phút — đúng thứ mà cả hệ thống UPS và script
+tự-tắt-máy này sinh ra để phòng tránh.
+
+- Máy tính, NAS, ổ cứng ngoài → dãy **`OUTPUT`** (luôn có điện)
+- Màn hình, loa, đèn, sạc điện thoại → dãy **`P1`** (ngắt được để kéo dài pin)
+
+Bố trí đúng như vậy thì P1 trở thành công cụ hữu ích: khi mất điện, các tải không thiết
+yếu tự rụng, dồn toàn bộ pin cho máy tính và NAS.
