@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "UPS Vertiv GXT Panel",
+        "description": "Add the UPS panel to the sidebar at /ups. No settings needed - data comes from the Windows agent over MQTT."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "The UPS panel is already set up."
+    }
+  }
+}

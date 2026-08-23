@@ -265,24 +265,43 @@ có IP riêng, nói SNMP + web, và HA đọc trực tiếp. Đây là phần c�
 
 # Cài panel vào HA qua HACS
 
-Repo này vừa là Windows agent, vừa là HACS plugin (`hacs.json` + `dist/ups-panel-card.js`).
+Repo này là **HACS integration** (không phải Lovelace plugin). Cài xong nó tự dựng
+mục **UPS** trên thanh bên tại đường dẫn **`/ups`** — không phải tạo dashboard,
+không phải thêm card, không sửa `configuration.yaml`.
 
-1. Push repo lên GitHub.
-2. HA → **HACS → Frontend → ⋮ → Custom repositories**
-   URL = repo của bạn, Category = **Lovelace**.
-3. Cài **UPS Vertiv GXT Panel**, xong Ctrl+F5.
-4. Thêm card vào dashboard:
+### Bước 1 — Thêm repo vào HACS
+
+HACS → menu ⋮ góc phải → **Custom repositories**
+
+| Ô | Điền |
+|---|---|
+| Repository | `https://github.com/l3th2nh/ha-ups-vertiv-gxt` |
+| Kiểu / Category | **Bộ tích hợp (Integration)** |
+
+### Bước 2 — Cài và khởi động lại
+
+Tìm **UPS Vertiv GXT Panel** → **Download** → **khởi động lại Home Assistant**.
+
+### Bước 3 — Bật lên
+
+*Cài đặt → Thiết bị & Dịch vụ → Thêm tích hợp* → gõ **UPS Vertiv** → Submit.
+
+Xong. Thanh bên hiện mục **UPS**, mở ra là panel đầy đủ 2 tab tại `/ups`.
+
+### Dùng thêm dạng card (tuỳ chọn)
+
+Integration cũng nạp sẵn card cho mọi dashboard, nên muốn nhúng vào dashboard
+khác thì thêm trực tiếp, **không cần khai báo resource**:
 
 ```yaml
 type: custom:ups-panel-card
 prefix: ups
 name: UPS Vertiv GXT-3000
-show_controls: true
 ```
 
-Agent đặt `obj_id` trong discovery nên entity_id **cố định và đoán trước được**:
-`sensor.ups_battery_percent`, `sensor.ups_mode_text`, `binary_sensor.ups_on_battery`,
-`button.ups_pc_shutdown`… Nhờ vậy card chỉ cần biết tiền tố `ups`.
+`prefix: ups` khớp với `obj_id` mà agent đặt, nên entity_id cố định và card tự tìm
+được hết: `sensor.ups_battery_percent`, `binary_sensor.ups_on_battery`,
+`sensor.ups_power_events`...
 
 ---
 

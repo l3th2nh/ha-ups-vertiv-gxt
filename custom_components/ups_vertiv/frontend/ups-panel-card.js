@@ -15,7 +15,7 @@
  *   name: UPS Vertiv GXT-3000
  */
 
-const UPS_CARD_VERSION = '2.0.0';
+const UPS_CARD_VERSION = '3.0.0';
 
 // Mau ma theo che do QMOD do agent gui len (mode_text bat dau bang tu khoa nay)
 const MODE_STYLE = [
@@ -408,15 +408,19 @@ class UpsPanelCard extends HTMLElement {
   }
 }
 
-customElements.define('ups-panel-card', UpsPanelCard);
+// Card duoc nap toan cuc qua frontend.add_extra_js_url nen co the bi nap 2 lan
+// (vi du sau khi reload integration). Dinh nghia trung se nem loi -> phai chan.
+if (!customElements.get('ups-panel-card')) {
+  customElements.define('ups-panel-card', UpsPanelCard);
 
-window.customCards = window.customCards || [];
-window.customCards.push({
-  type: 'ups-panel-card',
-  name: 'UPS Panel Card',
-  description: 'Panel theo doi UPS Vertiv/Liebert GXT: thong so + nhat ky mat dien.',
-  preview: true,
-});
+  window.customCards = window.customCards || [];
+  window.customCards.push({
+    type: 'ups-panel-card',
+    name: 'UPS Panel Card',
+    description: 'Panel theo doi UPS Vertiv/Liebert GXT: thong so + nhat ky mat dien.',
+    preview: true,
+  });
+}
 
 console.info(`%c UPS-PANEL-CARD %c v${UPS_CARD_VERSION} `,
   'color:#fff;background:#2e7d32;font-weight:700',

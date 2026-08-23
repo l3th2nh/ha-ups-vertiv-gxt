@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "UPS Vertiv GXT Panel",
+        "description": "Them muc UPS vao thanh ben tai /ups. Khong can nhap gi - du lieu do agent tren may Windows day len qua MQTT."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Panel UPS da duoc cai roi."
+    }
+  }
+}
