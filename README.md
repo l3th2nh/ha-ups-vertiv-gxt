@@ -745,3 +745,58 @@ không phải chờ chu kỳ quét.
 > File [`homeassistant/automation-ups.yaml`](homeassistant/automation-ups.yaml) vẫn còn
 > trong repo cho ai muốn tự viết luật riêng. **Đừng dùng đồng thời cả hai** — sẽ nhận
 > thông báo hai lần.
+
+---
+
+# Cài agent chạy nền (Scheduled Task)
+
+```powershell
+cd D:\Iot\ups
+.\Install-UpsMonitor.ps1
+```
+
+Script **tự xin quyền Administrator** — sẽ hiện hộp thoại UAC, bấm **Yes**. Không cần
+tự mở PowerShell nâng quyền.
+
+Nó hỏi thêm một câu nếu phát hiện có bản chạy tay:
+
+```
+CANH BAO: dang co 1 tien trinh Ups-Monitor.ps1 chay tay.
+Dong cac tien trinh do lai? (Y/n):
+```
+
+Nên trả lời **Y**. Hai bản cùng hỏi UPS sẽ đan xen lệnh trên cùng thiết bị HID.
+
+Task được đăng ký với:
+
+| Mục | Giá trị |
+|---|---|
+| Tài khoản | `SYSTEM` (không cần đăng nhập) |
+| Trigger 1 | Khi khởi động máy, **trễ 30 giây** |
+| Trigger 2 | Watchdog mỗi 10 phút — tự hồi sinh nếu agent chết |
+| Chống trùng | `IgnoreNew` (watchdog không tạo bản thứ hai) |
+| Giới hạn thời gian | Không (chạy vô hạn) |
+
+**Vì sao trễ 30 giây:** ngay sau khi boot, card mạng chưa sẵn sàng. Đã đo thực tế —
+MQTT timeout liên tục khoảng một phút rồi mới nối được. Agent vẫn tự thử lại nên không
+sai kết quả, nhưng trễ 30 giây làm log sạch hơn hẳn.
+
+## ⚠️ Bẫy khi kiểm tra: task của SYSTEM bị ẩn với phiên thường
+
+`Get-ScheduledTask` chạy từ PowerShell **không nâng quyền** sẽ **không thấy** task chạy
+dưới SYSTEM. Tương tự, `Win32_Process.CommandLine` của tiến trình SYSTEM trả về rỗng.
+
+**"Không thấy" ở đây KHÔNG có nghĩa là chưa cài.** Muốn biết chắc, xem bằng chứng thật:
+
+```powershell
+# 1. Log có đang được ghi không
+Get-Content .\logs\ups-monitor.log -Tail 20
+
+# 2. Broker có dữ liệu tươi không (cách chắc chắn nhất)
+#    So timestamp trong ups/vertiv_gxt3000/state với giờ hiện tại
+```
+
+Hoặc mở PowerShell bằng **Run as administrator** rồi chạy `.\Install-UpsMonitor.ps1 -Status`.
+
+Bản v3.3.1 trở đi, `-Status` chạy không nâng quyền sẽ nói rõ giới hạn này thay vì
+báo nhầm là "chưa cài đặt".

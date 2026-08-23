@@ -6,7 +6,7 @@
  * để tránh nhân đôi mã hiển thị.
  */
 
-const UPS_PANEL_VERSION = '3.3.0';
+const UPS_PANEL_VERSION = '3.3.1';
 const CARD_TAG = 'ups-panel-card';
 
 // Tính một lần, có đường lui: nếu import.meta.url không dùng được thì rơi về
