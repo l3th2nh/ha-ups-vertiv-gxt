@@ -1,12 +1,19 @@
 {
   "domain": "ups_vertiv",
   "name": "UPS Vertiv GXT Panel",
-  "codeowners": ["@l3th2nh"],
+  "codeowners": [
+    "@l3th2nh"
+  ],
   "config_flow": true,
-  "dependencies": ["http", "frontend"],
+  "dependencies": [
+    "http",
+    "frontend",
+    "panel_custom",
+    "websocket_api"
+  ],
   "documentation": "https://github.com/l3th2nh/ha-ups-vertiv-gxt",
   "integration_type": "service",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/l3th2nh/ha-ups-vertiv-gxt/issues",
-  "version": "3.2.0"
+  "version": "3.3.0"
 }

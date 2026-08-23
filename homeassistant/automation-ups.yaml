@@ -1,6 +1,15 @@
 # =============================================================================
 #  UPS Vertiv GXT-3000MTPLUS230 — Cảnh báo mất điện lên điện thoại
 # =============================================================================
+#  ⚠️ KHÔNG BẮT BUỘC — đây là phương án THAY THẾ.
+#
+#  Từ v3.3.0, integration đã có engine cảnh báo chạy nền: mở panel /ups →
+#  tab "Cài đặt" → chọn điện thoại → Lưu. Không cần đụng tới YAML.
+#
+#  File này chỉ dành cho ai muốn tự viết luật riêng. ĐỪNG dùng đồng thời cả hai,
+#  sẽ nhận thông báo hai lần. Nếu dùng file này, hãy TẮT cảnh báo trong tab
+#  "Cài đặt" của panel.
+#
 #  CÁCH DÙNG
 #    1. Home Assistant → Cài đặt → Tự động hoá & Cảnh báo → Tạo tự động hoá
 #    2. Menu ⋮ góc trên bên phải → "Chỉnh sửa trong YAML"

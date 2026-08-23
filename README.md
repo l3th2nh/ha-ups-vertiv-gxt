@@ -695,3 +695,53 @@ Bấm vào thông báo sẽ mở thẳng panel `/ups`.
 **Công cụ cho nhà phát triển → Trạng thái** → đặt
 `binary_sensor.ups_vertiv_gxt_3000mtplus230_on_battery` = `on`.
 Giá trị này bị ghi đè ở lần agent đẩy dữ liệu kế tiếp nên hoàn toàn vô hại.
+
+---
+
+# Cảnh báo mất điện — cấu hình ngay trong panel
+
+Từ **v3.3.0**, integration có **engine cảnh báo chạy nền trong Home Assistant**.
+Không cần viết YAML, không cần tạo automation.
+
+### Dùng thế nào
+
+Mở panel **`/ups`** → tab **Cài đặt**:
+
+| Mục | Ý nghĩa |
+|---|---|
+| Bật cảnh báo | Công tắc tổng |
+| Gửi tới đâu | Chọn `notify.mobile_app_…` của điện thoại; để trống thì chỉ hiện trong HA |
+| Mất điện lưới | Báo ngay khi UPS chuyển sang chạy pin |
+| Có điện trở lại | Báo khi điện lưới phục hồi |
+| Pin xuống dưới N% | Cảnh báo sớm, ngưỡng tự đặt (mặc định 50%) |
+| Pin xuống dưới N% (sắp tự tắt máy) | Cảnh báo nguy cấp (mặc định 25%) |
+| UPS tự ngắt ổ P1 | Báo khi dãy P1 bị shed |
+
+Bấm **Gửi thử** để kiểm tra ngay dịch vụ đã chọn — không phải chờ mất điện thật.
+
+Cấu hình lưu trong `/config/.storage/ups_vertiv`, còn nguyên sau khi khởi động lại HA.
+
+### Vì sao làm trong integration thay vì YAML
+
+Đúng mẫu mà `inverter_bridge` đang chạy: engine nằm trong integration, luật lưu vào
+`.storage`, cấu hình bằng giao diện. Người dùng chỉ bấm chuột, không phải dán YAML
+và không phải sửa lại mỗi lần đổi gì.
+
+Engine bám theo `async_track_state_change_event` nên phản ứng **tức thì** khi mất điện,
+không phải chờ chu kỳ quét.
+
+### Chi tiết kỹ thuật
+
+- Entity được **dò tự động** (tìm entity kết thúc bằng `_power_events` để suy ra tiền tố),
+  nên không hỏng khi HA đổi cách đặt tên. Dò lại mỗi 30 giây phòng khi entity xuất hiện muộn.
+- Cảnh báo pin chỉ bắn **một lần cho mỗi lần mất điện**, reset khi có điện lại —
+  không spam khi pin dao động quanh ngưỡng.
+- Chạm ngưỡng nguy cấp thì bỏ qua luôn mức cảnh báo, tránh hai thông báo liền nhau.
+- Gửi thông báo có **đường lui**: nếu dịch vụ đã chọn lỗi, tin vẫn hiện trong HA kèm
+  ghi chú, không im lặng nuốt mất cảnh báo.
+- Thông báo "mất điện" và "có điện lại" dùng chung `tag` nên cái sau **thay thế** cái trước.
+- Bấm vào thông báo mở thẳng panel `/ups`.
+
+> File [`homeassistant/automation-ups.yaml`](homeassistant/automation-ups.yaml) vẫn còn
+> trong repo cho ai muốn tự viết luật riêng. **Đừng dùng đồng thời cả hai** — sẽ nhận
+> thông báo hai lần.

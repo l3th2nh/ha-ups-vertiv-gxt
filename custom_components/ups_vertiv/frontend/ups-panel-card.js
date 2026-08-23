@@ -5,16 +5,17 @@
  * CHỈ ĐỌC — không có nút điều khiển nào. Dữ liệu đến từ agent trên máy Windows
  * (Ups-Monitor.ps1) đẩy lên qua MQTT Discovery.
  *
- * Hai tab:
+ * Ba tab:
  *   1. Thông tin — trạng thái và thông số hiện tại
  *   2. Nhật ký   — lịch sử mất điện / có điện lại
+ *   3. Cài đặt   — bật/tắt cảnh báo, chọn điện thoại nhận thông báo
  *
  * Card tự dò tiền tố entity nên thường không cần cấu hình gì:
  *   type: custom:ups-panel-card
  * Chỉ đặt `prefix` khi muốn ép thủ công (ví dụ có 2 bộ UPS).
  */
 
-const UPS_CARD_VERSION = '3.2.0';
+const UPS_CARD_VERSION = '3.3.0';
 
 // Agent chỉ đẩy MÃ (alias) thuần ASCII — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Nhờ vậy file .ps1 không phụ thuộc bảng mã, và muốn đổi câu chữ chỉ sửa một chỗ.
@@ -160,11 +161,106 @@ class UpsPanelCard extends HTMLElement {
   _setTab(tab) {
     this._tab = tab;
     const $ = (id) => this.shadowRoot.getElementById(id);
-    $('tab-info').className = 'tab' + (tab === 'info' ? ' sel' : '');
-    $('tab-log').className = 'tab' + (tab === 'log' ? ' sel' : '');
-    $('pane-info').style.display = tab === 'info' ? 'block' : 'none';
-    $('pane-log').style.display = tab === 'log' ? 'block' : 'none';
+    for (const t of ['info', 'log', 'set']) {
+      $(`tab-${t}`).className = 'tab' + (tab === t ? ' sel' : '');
+      $(`pane-${t}`).style.display = tab === t ? 'block' : 'none';
+    }
+    if (tab === 'set') this._loadSettings();
     this._update();
+  }
+
+  // ----------------------------------------------------------- cài đặt ----
+  async _loadSettings() {
+    if (!this._hass || !this._hass.callWS) return;
+    try {
+      const res = await this._hass.callWS({ type: 'ups_vertiv/get' });
+      this._cfg = res.config || {};
+      this._renderSettings();
+    } catch (e) {
+      this.shadowRoot.getElementById('set-msg').textContent =
+        'Không đọc được cấu hình: ' + (e.message || e);
+    }
+  }
+
+  /** Danh sách dịch vụ thông báo khả dụng: dịch vụ notify.* + entity notify.* */
+  _notifyChoices() {
+    const out = new Set();
+    const svc = (this._hass.services && this._hass.services.notify) || {};
+    for (const name of Object.keys(svc)) {
+      if (name !== 'send_message') out.add(`notify.${name}`);
+    }
+    for (const id of Object.keys(this._hass.states)) {
+      if (id.startsWith('notify.')) out.add(id);
+    }
+    return [...out].sort();
+  }
+
+  _renderSettings() {
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    const c = this._cfg || {};
+
+    const chosen = c.service || '';
+    const opts = ['<option value="">Hiện trong Home Assistant (không ra điện thoại)</option>']
+      .concat(
+        this._notifyChoices().map(
+          (s) => `<option value="${s}"${s === chosen ? ' selected' : ''}>${s}</option>`
+        )
+      );
+    // Dịch vụ đã lưu nhưng hiện không còn tồn tại -> vẫn giữ để không mất cấu hình
+    if (chosen && !this._notifyChoices().includes(chosen)) {
+      opts.push(`<option value="${chosen}" selected>${chosen} (không tìm thấy)</option>`);
+    }
+    $('set-svc').innerHTML = opts.join('');
+
+    $('set-enabled').checked = !!c.enabled;
+    $('set-outage').checked = !!c.outage;
+    $('set-restore').checked = !!c.restore;
+    $('set-warn').checked = !!c.batt_warn;
+    $('set-crit').checked = !!c.batt_crit;
+    $('set-shed').checked = !!c.shed;
+    $('set-warn-at').value = c.batt_warn_at ?? 50;
+    $('set-crit-at').value = c.batt_crit_at ?? 25;
+  }
+
+  _collectSettings() {
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    return {
+      enabled: $('set-enabled').checked,
+      service: $('set-svc').value,
+      outage: $('set-outage').checked,
+      restore: $('set-restore').checked,
+      batt_warn: $('set-warn').checked,
+      batt_warn_at: Number($('set-warn-at').value) || 50,
+      batt_crit: $('set-crit').checked,
+      batt_crit_at: Number($('set-crit-at').value) || 25,
+      shed: $('set-shed').checked,
+    };
+  }
+
+  async _saveSettings() {
+    const msg = this.shadowRoot.getElementById('set-msg');
+    try {
+      const config = this._collectSettings();
+      await this._hass.callWS({ type: 'ups_vertiv/save', config });
+      this._cfg = config;
+      msg.textContent = 'Đã lưu.';
+    } catch (e) {
+      msg.textContent = 'Lưu thất bại: ' + (e.message || e);
+    }
+  }
+
+  async _testNotify() {
+    const msg = this.shadowRoot.getElementById('set-msg');
+    msg.textContent = 'Đang gửi…';
+    try {
+      const res = await this._hass.callWS({
+        type: 'ups_vertiv/test',
+        service: this.shadowRoot.getElementById('set-svc').value,
+      });
+      msg.textContent = res.detail || (res.ok ? 'Đã gửi.' : 'Không gửi được.');
+    } catch (e) {
+      msg.textContent = 'Không gửi được: ' + (e.message || e);
+    }
   }
 
   // ------------------------------------------------------------- dựng DOM ---
@@ -248,6 +344,29 @@ class UpsPanelCard extends HTMLElement {
         .tag.live { background:rgba(244,67,54,.22); color:#c62828; }
 
         .empty { text-align:center; padding:28px 12px; color:var(--secondary-text-color); font-size:.85rem; line-height:1.7; }
+
+        .row { display:flex; align-items:center; justify-content:space-between; gap:12px;
+               padding:10px 12px; border-radius:8px; background:var(--secondary-background-color);
+               margin-bottom:8px; }
+        .row .lb { font-size:.85rem; color:var(--primary-text-color); }
+        .row .hint { font-size:.72rem; color:var(--secondary-text-color); margin-top:2px; }
+        .row select, .row input[type=number] {
+          font-family:inherit; font-size:.85rem; padding:6px 8px; border-radius:6px;
+          border:1px solid var(--divider-color); background:var(--card-background-color);
+          color:var(--primary-text-color); max-width:100%;
+        }
+        .row select { flex:1 1 240px; min-width:0; }
+        .row input[type=number] { width:64px; }
+        .row input[type=checkbox] { width:18px; height:18px; flex:0 0 auto; cursor:pointer; }
+        .sect { font-size:.72rem; font-weight:700; color:var(--secondary-text-color);
+                margin:16px 0 8px; letter-spacing:.03em; }
+        .btns { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+        .btns button { flex:1 1 130px; padding:10px 12px; border:none; border-radius:8px;
+                       cursor:pointer; font-size:.85rem; font-weight:600; font-family:inherit; }
+        .btns .save { background:var(--primary-color,#03a9f4); color:#fff; }
+        .btns .test { background:var(--secondary-background-color); color:var(--primary-text-color); }
+        .btns button:hover { filter:brightness(.94); }
+        #set-msg { margin-top:10px; font-size:.8rem; color:var(--secondary-text-color); min-height:1.2em; }
         .foot { margin-top:12px; font-size:.7rem; color:var(--secondary-text-color); text-align:right; }
       </style>
 
@@ -263,6 +382,7 @@ class UpsPanelCard extends HTMLElement {
         <div class="tabs">
           <button class="tab sel" id="tab-info">Thông tin</button>
           <button class="tab" id="tab-log">Nhật ký</button>
+          <button class="tab" id="tab-set">Cài đặt</button>
         </div>
 
         <div class="banner off" id="banner"></div>
@@ -323,6 +443,53 @@ class UpsPanelCard extends HTMLElement {
           <div id="ev-list"></div>
         </div>
 
+        <div id="pane-set" style="display:none">
+          <div class="row">
+            <div>
+              <div class="lb">Bật cảnh báo</div>
+              <div class="hint">Tắt cái này thì không gửi thông báo nào</div>
+            </div>
+            <input type="checkbox" id="set-enabled">
+          </div>
+
+          <div class="sect">GỬI TỚI ĐÂU</div>
+          <div class="row">
+            <select id="set-svc"></select>
+          </div>
+          <div class="hint" style="padding:0 12px">
+            Chọn <b>notify.mobile_app_…</b> tương ứng điện thoại đã cài app Home Assistant.
+            Bấm <b>Gửi thử</b> để kiểm tra ngay.
+          </div>
+
+          <div class="sect">BÁO NHỮNG GÌ</div>
+          <div class="row">
+            <div class="lb">Mất điện lưới</div>
+            <input type="checkbox" id="set-outage">
+          </div>
+          <div class="row">
+            <div class="lb">Có điện trở lại</div>
+            <input type="checkbox" id="set-restore">
+          </div>
+          <div class="row">
+            <div class="lb">Pin xuống dưới <input type="number" id="set-warn-at" min="1" max="99"> %</div>
+            <input type="checkbox" id="set-warn">
+          </div>
+          <div class="row">
+            <div class="lb">Pin xuống dưới <input type="number" id="set-crit-at" min="1" max="99"> % (sắp tự tắt máy)</div>
+            <input type="checkbox" id="set-crit">
+          </div>
+          <div class="row">
+            <div class="lb">UPS tự ngắt ổ cắm P1</div>
+            <input type="checkbox" id="set-shed">
+          </div>
+
+          <div class="btns">
+            <button class="save" id="btn-save">Lưu</button>
+            <button class="test" id="btn-test">Gửi thử</button>
+          </div>
+          <div id="set-msg"></div>
+        </div>
+
         <div class="foot" id="foot"></div>
       </ha-card>
     `;
@@ -330,6 +497,9 @@ class UpsPanelCard extends HTMLElement {
     const $ = (id) => this.shadowRoot.getElementById(id);
     $('tab-info').addEventListener('click', () => this._setTab('info'));
     $('tab-log').addEventListener('click', () => this._setTab('log'));
+    $('tab-set').addEventListener('click', () => this._setTab('set'));
+    $('btn-save').addEventListener('click', () => this._saveSettings());
+    $('btn-test').addEventListener('click', () => this._testNotify());
     this._built = true;
   }
 
