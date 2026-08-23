@@ -1,0 +1,12 @@
+# ---- BAT BUOC: file cau hinh that chua MAT KHAU MQTT, KHONG duoc commit ----
+ups-config.psd1
+
+# Log
+logs/
+*.log
+
+# Rac Windows / editor
+Thumbs.db
+desktop.ini
+.vscode/
+*.swp
