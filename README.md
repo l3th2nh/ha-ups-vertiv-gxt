@@ -185,3 +185,156 @@ riêng** cho UPS thay vì dùng tài khoản HA chính.
 Lệnh `S<nn>` tắt hẳn UPS sau khi PC đã shutdown — giúp UPS không xả kiệt pin và tự bật
 lại khi có điện. **Chưa bật** vì nó cắt điện toàn bộ tải, cần cân nhắc kỹ với NAS và các
 thiết bị khác đang cắm chung.
+
+---
+
+# Độ phân giải phần trăm pin — CHƯA kết luận được
+
+Đo 8 lần liên tiếp lúc UPS đang sạc đầy:
+
+```
+QBV -> (082.1 06 01 100 099
+       (082.1 06 01 100 192
+       (082.0 06 01 100 200
+       (082.1 06 01 100 215
+       (082.1 06 01 100 194
+       (082.1 06 01 100 096
+       (082.0 06 01 100 206
+       (082.1 06 01 100 183
+                     ^^^ ^^^
+                      %  phút
+```
+
+**Phần trăm luôn đúng bằng `100`.** Ở trạng thái sạc đầy thì mọi thang đo — dù liên tục
+0–100 hay chỉ có bước 0/25/50/75/100 — đều cho ra `100`. **Không thể phân biệt nếu không xả pin.**
+Cách duy nhất kết luận: ngắt điện đầu vào UPS và quan sát chuỗi giá trị khi nó tụt xuống.
+
+**Phát hiện đáng lo hơn:** cột **số phút dự phòng nhiễu rất nặng** — 8 lần đọc cách nhau
+~1.2 giây cho ra **96 → 192 → 200 → 215 → 194 → 96 → 206 → 183**. Biên độ hơn gấp đôi.
+Vì vậy **không nên** dùng `RuntimeMinutesBelow` làm chốt chặn duy nhất.
+
+Kết luận thiết kế: dùng **điện áp pin** làm ngưỡng chính (`BatteryVoltageBelow`).
+Nó có độ phân giải 0.1V (đo được 082.0 / 082.1, chỉ dao động 0.1V) nên ổn định nhất
+trong ba nguồn tín hiệu. Ba ngưỡng còn lại giữ vai trò lưới an toàn chồng lên nhau —
+điều kiện nào chạm trước thì kích hoạt trước.
+
+## Bài kiểm tra thực tế nên làm (~2 phút)
+
+Rút phích cắm **đầu vào** UPS (không rút tải) khoảng 60–90 giây, trong lúc đó chạy:
+
+```powershell
+cd D:\Iot\ups
+. .\UpsHid.ps1
+1..40 | ForEach-Object {
+  '{0}  {1}  {2}' -f (Get-Date -Format 'HH:mm:ss'), (Invoke-UpsCommand 'QMOD'), (Invoke-UpsCommand 'QBV')
+  Start-Sleep -Seconds 2
+}
+```
+
+Bài này trả lời cùng lúc 4 câu:
+1. Phần trăm pin nhảy theo bước bao nhiêu
+2. Số phút dự phòng lúc chạy pin có ổn định hơn không
+3. `QMOD` có thật sự đổi `L` → `B` không (xác thực toàn bộ đường phát hiện mất điện)
+4. 12 bit trạng thái `QGS` — so chuỗi lúc có điện và lúc mất điện để giải mã bit nào là gì
+
+---
+
+# Dữ liệu HA đến từ đâu?
+
+```
+UPS ──USB(HID)──> MÁY TÍNH NÀY ──MQTT/WiFi──> Mosquitto ──> Home Assistant
+     Cypress 0665:5161      Ups-Monitor.ps1    192.168.0.146
+```
+
+**Home Assistant nhận dữ liệu từ MÁY TÍNH NÀY, không phải trực tiếp từ UPS.**
+Bản thân UPS không có cổng mạng — nó chỉ có USB và khe IntelliSlot (đang trống).
+
+Hệ quả quan trọng: **máy tính tắt thì HA mất số liệu UPS.** Bộ giám sát có Last Will nên
+HA sẽ hiện `unavailable` ngay chứ không treo số liệu cũ — card panel bắt trạng thái này
+và hiện băng cảnh báo.
+
+**Muốn HA đọc thẳng từ UPS, độc lập với máy tính:** cần lắp card mạng
+**Liebert IntelliSlot** (IS-UNITY-DP / RDU101) vào khe IntelliSlot của GXT3. Khi đó UPS
+có IP riêng, nói SNMP + web, và HA đọc trực tiếp. Đây là phần cứng phải mua thêm.
+
+---
+
+# Cài panel vào HA qua HACS
+
+Repo này vừa là Windows agent, vừa là HACS plugin (`hacs.json` + `dist/ups-panel-card.js`).
+
+1. Push repo lên GitHub.
+2. HA → **HACS → Frontend → ⋮ → Custom repositories**
+   URL = repo của bạn, Category = **Lovelace**.
+3. Cài **UPS Vertiv GXT Panel**, xong Ctrl+F5.
+4. Thêm card vào dashboard:
+
+```yaml
+type: custom:ups-panel-card
+prefix: ups
+name: UPS Vertiv GXT-3000
+show_controls: true
+```
+
+Agent đặt `obj_id` trong discovery nên entity_id **cố định và đoán trước được**:
+`sensor.ups_battery_percent`, `sensor.ups_mode_text`, `binary_sensor.ups_on_battery`,
+`button.ups_pc_shutdown`… Nhờ vậy card chỉ cần biết tiền tố `ups`.
+
+---
+
+# Tắt / bật máy tính từ xa
+
+## Tắt và khởi động lại — ĐÃ LÀM XONG
+
+Agent subscribe topic `ups/vertiv_gxt3000/cmd`. HA tự tạo 3 nút:
+
+| Entity | Payload | Việc thực hiện |
+|---|---|---|
+| `button.ups_pc_shutdown` | `shutdown` | `shutdown /s /f /t 30` |
+| `button.ups_pc_restart` | `restart` | `shutdown /r /f /t 30` |
+| `button.ups_cancel_shutdown` | `cancel` | `shutdown /a` |
+
+Card panel có sẵn 3 nút này kèm hộp xác nhận. Chỉnh thời gian đếm ngược ở
+`RemoteControl.GraceSeconds`.
+
+> **Cảnh báo bảo mật:** bất kỳ ai truy cập được broker MQTT đều tắt được máy này.
+> Đặt `RemoteControl.Enabled = $false` nếu không cần.
+>
+> Lệnh retained được xoá ngay sau khi xử lý, tránh việc máy tự tắt lặp lại mỗi lần
+> agent kết nối lại.
+
+## Bật máy từ xa — CẦN CẮM DÂY MẠNG
+
+Wake-on-LAN đã sẵn sàng ở phía Windows. `powercfg /devicequery wake_armed` cho thấy
+**cả hai card Ethernet đều đã được phép đánh thức máy**:
+
+| Card | MAC | Trạng thái |
+|---|---|---|
+| Intel I211 Gigabit | `40-16-7E-A4-D2-93` | **Chưa cắm dây** |
+| Intel I219-V | `10-7B-44-16-25-5D` | **Chưa cắm dây** |
+| Qualcomm QCA61x4A (WiFi) | `6E-0B-8A-27-A6-AB` | Đang dùng — **WoL không khả dụng** |
+
+Máy đang chạy WiFi, mà **Wake-on-WLAN trên chip Qualcomm này không dùng được thực tế**.
+Nên **muốn bật máy từ xa thì phải cắm dây LAN.**
+
+Sau khi cắm dây, thêm vào `configuration.yaml` của HA:
+
+```yaml
+wake_on_lan:
+
+switch:
+  - platform: wake_on_lan
+    name: PC UPS
+    mac: "40:16:7E:A4:D2:93"      # doi theo cong Ethernet ban cam that
+    host: 192.168.0.196
+    turn_off:
+      service: button.press
+      target:
+        entity_id: button.ups_pc_shutdown
+```
+
+Hai điều kiện phía BIOS/Windows cần kiểm tra thêm:
+- BIOS: bật **Wake on LAN** / **Power On by PCI-E**
+- Windows: **tắt Fast Startup** (Control Panel → Power Options → Choose what the power
+  buttons do). Fast Startup khiến máy vào trạng thái hybrid và thường làm WoL từ trạng
+  thái tắt hẳn không hoạt động.
