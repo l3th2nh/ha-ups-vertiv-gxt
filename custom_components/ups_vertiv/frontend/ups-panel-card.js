@@ -15,7 +15,7 @@
  *   name: UPS Vertiv GXT-3000
  */
 
-const UPS_CARD_VERSION = '3.0.2';
+const UPS_CARD_VERSION = '3.0.3';
 
 // Mau ma theo che do QMOD do agent gui len (mode_text bat dau bang tu khoa nay)
 const MODE_STYLE = [
@@ -307,16 +307,25 @@ class UpsPanelCard extends HTMLElement {
     // --- banner canh bao ---
     const banner = $('banner');
     if (missing) {
-      // Dem xem co entity nao mang tien to nay khong -> giup chan doan nhanh
-      const pfx = `.${this._config.prefix}_`;
-      const found = Object.keys(this._hass.states).filter((id) => id.includes(pfx)).length;
+      // Liet ke han ten entity lien quan de biet HA da tao gi (neu co)
+      const hits = Object.keys(this._hass.states)
+        .filter((id) => /(^|\.)ups[_.]|vertiv/i.test(id))
+        .sort();
+      const listed = hits.slice(0, 15).map((id) => `<code>${id}</code>`).join('<br>');
+      const more = hits.length > 15 ? `<br>... va ${hits.length - 15} cai nua` : '';
+      const found = hits.length
+        ? `<br><br><b>Entity lien quan dang co trong HA (${hits.length}):</b><br>${listed}${more}`
+        : `<br><br>Khong co entity nao ten lien quan toi UPS trong HA.`;
+
       banner.className = 'banner bad show';
       banner.innerHTML =
-        `Khong tim thay <code>${this._id('sensor', 'mode_text')}</code> trong Home Assistant ` +
-        `(tim duoc ${found} entity co tien to <code>${this._config.prefix}_</code>).<br><br>` +
-        `<b>Nguyen nhan thuong gap:</b> HA chua bat tich hop MQTT. Vao ` +
-        `<b>Cai dat &rarr; Thiet bi &amp; Dich vu &rarr; Them tich hop &rarr; MQTT</b>. ` +
-        `Du lieu da nam san tren broker roi, HA chi can duoc bat de doc.`;
+        `Khong tim thay <code>${this._id('sensor', 'mode_text')}</code> trong Home Assistant.` +
+        found +
+        `<br><br><b>Neu danh sach tren trong:</b> HA chua doc MQTT discovery. Kiem tra ` +
+        `<b>Cai dat &rarr; Thiet bi &amp; Dich vu &rarr; MQTT &rarr; Cau hinh</b>: ` +
+        `bat <i>Enable discovery</i> va de <i>Discovery prefix</i> = <code>homeassistant</code>.` +
+        `<br><b>Neu co ten khac la:</b> HA da tao entity nhung dat ten khac - bao lai ten do ` +
+        `de sua <code>prefix</code> cua card cho khop.`;
     } else if (unavail) {
       banner.className = 'banner off show';
       banner.innerHTML =
