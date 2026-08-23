@@ -161,7 +161,7 @@ Khi kích hoạt: chạy `shutdown /s /f /t 60`. **Nếu điện có lại trong
 
 Script publish MQTT Discovery nên HA tự tạo thiết bị, **không cần sửa `configuration.yaml`**.
 
-- Broker: `192.168.0.146:1883`
+- Broker: `<IP-HOME-ASSISTANT>:1883` (khai báo trong `ups-config.psd1`)
 - State topic: `ups/vertiv_gxt3000/state` (JSON, retained)
 - Availability: `ups/vertiv_gxt3000/availability` — có **Last Will**, nên PC mất điện đột ngột
   thì HA thấy `offline` ngay
@@ -247,7 +247,7 @@ Bài này trả lời cùng lúc 4 câu:
 
 ```
 UPS ──USB(HID)──> MÁY TÍNH NÀY ──MQTT/WiFi──> Mosquitto ──> Home Assistant
-     Cypress 0665:5161      Ups-Monitor.ps1    192.168.0.146
+     Cypress 0665:5161      Ups-Monitor.ps1    <IP-HOME-ASSISTANT>
 ```
 
 **Home Assistant nhận dữ liệu từ MÁY TÍNH NÀY, không phải trực tiếp từ UPS.**

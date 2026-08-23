@@ -68,7 +68,7 @@
 
   Mqtt = @{
     Enabled         = $true
-    Host            = '192.168.0.146'
+    Host            = '192.168.1.10'   # <<< DIEN IP HOME ASSISTANT CUA BAN
     Port            = 1883
     Username        = ''    # <<< DIEN TAI KHOAN MQTT
     Password        = ''    # <<< DIEN MAT KHAU MQTT
