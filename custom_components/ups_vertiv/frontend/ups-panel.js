@@ -6,7 +6,7 @@
  * de tranh nhan doi code render.
  */
 
-const UPS_PANEL_VERSION = '3.0.3';
+const UPS_PANEL_VERSION = '3.1.0';
 const CARD_TAG = 'ups-panel-card';
 
 // Tinh mot lan, co duong lui: neu import.meta.url khong dung duoc thi rot ve

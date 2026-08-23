@@ -9,13 +9,12 @@
  *   1. Thong tin  - trang thai va thong so hien tai
  *   2. Nhat ky    - lich su mat dien / co dien lai
  *
- * Vi du cau hinh Lovelace:
+ * Card TU DO tien to entity nen thuong khong can cau hinh gi:
  *   type: custom:ups-panel-card
- *   prefix: ups
- *   name: UPS Vertiv GXT-3000
+ * Chi dat `prefix` khi muon ep thu cong (vi du co 2 bo UPS).
  */
 
-const UPS_CARD_VERSION = '3.0.3';
+const UPS_CARD_VERSION = '3.1.0';
 
 // Mau ma theo che do QMOD do agent gui len (mode_text bat dau bang tu khoa nay)
 const MODE_STYLE = [
@@ -29,6 +28,28 @@ const MODE_STYLE = [
   { match: /^Power On/i,  cls: 'warn', label: 'Dang khoi dong' },
   { match: /^Shutdown/i,  cls: 'crit', label: 'Shutdown' },
 ];
+
+// Home Assistant sinh entity_id tu TEN THIET BI + TEN ENTITY, bo qua obj_id.
+// Vi du: thiet bi "UPS Vertiv GXT-3000MTPLUS230" + entity "Status"
+//        -> sensor.ups_vertiv_gxt_3000mtplus230_status
+// Bang nay anh xa khoa logic -> duoi entity_id do HA sinh ra tu ten.
+const NAME_SUFFIX = {
+  battery_percent: 'battery',
+  runtime_minutes: 'runtime',
+  load_percent: 'load',
+  load_watts: 'load_power',
+  input_freq: 'input_frequency',
+  output_freq: 'output_frequency',
+  mode_text: 'status',
+  has_warning: 'fault',
+  outlet_p1: 'programmable_outlet_p1',
+  // cac khoa con lai trung ten nen khong can anh xa:
+  // input_voltage, output_voltage, battery_voltage, output_current,
+  // temperature, power_events, on_battery
+};
+
+// Khoa dung de do tien to vi no duy nhat va chac chan ton tai
+const PROBE_KEY = 'power_events';
 
 function fmtDuration(sec) {
   sec = Math.max(0, Math.round(sec || 0));
@@ -74,7 +95,36 @@ class UpsPanelCard extends HTMLElement {
   }
 
   // ------------------------------------------------------------ helpers ----
-  _id(domain, key) { return `${domain}.${this._config.prefix}_${key}`; }
+
+  /**
+   * Do tien to that cua bo entity. Uu tien tien to trong cau hinh; neu khong
+   * khop thi tu tim entity ket thuc bang `_power_events` de suy ra tien to
+   * do HA sinh. Nho vay card chay duoc bat ke HA dat ten kieu nao.
+   */
+  _resolvePrefix() {
+    const cfg = this._config.prefix;
+    if (this._hass.states[`sensor.${cfg}_${PROBE_KEY}`]) return cfg;
+
+    const hit = Object.keys(this._hass.states).find(
+      (id) => id.startsWith('sensor.') && id.endsWith(`_${PROBE_KEY}`)
+    );
+    if (hit) return hit.slice('sensor.'.length, -(`_${PROBE_KEY}`.length));
+    return cfg;
+  }
+
+  /** Thu ca ten theo khoa lan ten do HA sinh tu nhan hien thi. */
+  _id(domain, key) {
+    const pfx = this._pfx || this._config.prefix;
+    const direct = `${domain}.${pfx}_${key}`;
+    if (this._hass && this._hass.states[direct]) return direct;
+
+    const alt = NAME_SUFFIX[key];
+    if (alt) {
+      const mapped = `${domain}.${pfx}_${alt}`;
+      if (this._hass && this._hass.states[mapped]) return mapped;
+    }
+    return direct;   // de thong bao loi hien ten dang chuan, de doc
+  }
 
   _state(domain, key) {
     if (!this._hass) return null;
@@ -281,6 +331,9 @@ class UpsPanelCard extends HTMLElement {
   _update() {
     if (!this._hass || !this._built) return;
     const $ = (id) => this.shadowRoot.getElementById(id);
+
+    // Do lai tien to moi lan cap nhat: entity co the xuat hien muon hon card
+    this._pfx = this._resolvePrefix();
 
     const modeEnt = this._hass.states[this._id('sensor', 'mode_text')];
     const modeText = modeEnt ? modeEnt.state : null;

@@ -566,3 +566,53 @@ Nhãn phụ: `O P1 bi ngat`, `Da tu tat may`.
 `RemoteControl.Enabled = $false`. Khi bật, agent chỉ subscribe topic `<BaseTopic>/cmd` và
 nhận 3 payload `shutdown` / `restart` / `cancel`. **Không tạo nút nào trong HA** — muốn dùng
 phải tự viết automation publish vào topic đó.
+
+---
+
+# Tên entity: HA đặt theo tên thiết bị, không theo `obj_id`
+
+Agent gửi `obj_id` mong HA đặt `sensor.ups_battery_percent`. **HA bỏ qua nó** và tự sinh
+entity_id từ **tên thiết bị + tên entity**:
+
+```
+Thiet bi "UPS Vertiv GXT-3000MTPLUS230" + entity "Status"
+   -> sensor.ups_vertiv_gxt_3000mtplus230_status
+```
+
+Vì vậy card **tự dò tiền tố** thay vì bắt HA đặt tên theo ý mình:
+
+1. Thử tiền tố trong cấu hình (`prefix`, mặc định `ups`)
+2. Không khớp thì tìm entity nào kết thúc bằng `_power_events` — khoá này duy nhất —
+   rồi suy ra tiền tố thật
+3. Với từng khoá, thử tên theo khoá trước, không có thì tra bảng `NAME_SUFFIX`
+
+Nhờ vậy card chạy được bất kể HA đặt tên kiểu nào, và **không cần cấu hình gì**:
+
+```yaml
+type: custom:ups-panel-card
+```
+
+Bảng ánh xạ khoá → đuôi entity_id (những khoá không liệt kê thì trùng tên):
+
+| Khoá | Nhãn hiển thị | Đuôi entity_id |
+|---|---|---|
+| `battery_percent` | Battery | `_battery` |
+| `runtime_minutes` | Runtime | `_runtime` |
+| `load_percent` | Load | `_load` |
+| `load_watts` | Load Power | `_load_power` |
+| `input_freq` | Input Frequency | `_input_frequency` |
+| `output_freq` | Output Frequency | `_output_frequency` |
+| `mode_text` | Status | `_status` |
+| `has_warning` | Fault | `_fault` |
+| `outlet_p1` | Programmable Outlet P1 | `_programmable_outlet_p1` |
+
+## Bẫy đã gặp: tích hợp MQTT bị VÔ HIỆU HÓA
+
+Triệu chứng: broker có đủ dữ liệu, nhưng HA không tạo entity nào; thêm tích hợp MQTT
+thì báo `single_instance_allowed` mà danh sách lại không thấy MQTT đâu.
+
+Nguyên nhân: tích hợp MQTT **đã cài nhưng bị tắt**, nên bị bộ lọc mặc định ẩn đi.
+Dấu hiệu nhận biết: góc trên bên phải trang *Bộ tích hợp* có dòng **"1 bị vô hiệu hóa — Hiển thị"**.
+
+Cách sửa: bấm **Hiển thị** → chọn MQTT → **Bật**. Discovery là retained nên HA đọc lại
+được ngay, không cần chạy lại agent.
