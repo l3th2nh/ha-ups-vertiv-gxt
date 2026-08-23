@@ -1,0 +1,195 @@
+# =============================================================================
+#  UPS Vertiv GXT-3000MTPLUS230 — Cảnh báo mất điện lên điện thoại
+# =============================================================================
+#  CÁCH DÙNG
+#    1. Home Assistant → Cài đặt → Tự động hoá & Cảnh báo → Tạo tự động hoá
+#    2. Menu ⋮ góc trên bên phải → "Chỉnh sửa trong YAML"
+#    3. Xoá hết nội dung mẫu, dán toàn bộ file này vào
+#    4. Sửa DUY NHẤT dòng `dien_thoai:` bên dưới cho đúng máy của bạn
+#    5. Lưu
+#
+#  TÌM TÊN DỊCH VỤ THÔNG BÁO CỦA ĐIỆN THOẠI
+#    Công cụ cho nhà phát triển → tab Hành động → gõ "notify."
+#    Chọn dòng dạng  notify.mobile_app_<tên_điện_thoại>
+#
+#  Muốn báo lên NHIỀU máy: xem mục "Gửi tới nhiều thiết bị" ở cuối file.
+# =============================================================================
+
+alias: UPS — Cảnh báo mất điện
+description: >-
+  Báo lên điện thoại khi UPS chuyển sang chạy pin, cảnh báo khi pin xuống thấp,
+  và báo khi có điện lưới trở lại.
+
+# queued: nếu điện chập chờn, các lần kích hoạt xếp hàng chứ không bị bỏ qua
+mode: queued
+max: 10
+
+variables:
+  # ▼▼▼ SỬA DÒNG NÀY ▼▼▼
+  dien_thoai: notify.mobile_app_dien_thoai_cua_ban
+  # ▲▲▲ SỬA DÒNG NÀY ▲▲▲
+
+  ups_pin: sensor.ups_vertiv_gxt_3000mtplus230_battery
+  ups_runtime: sensor.ups_vertiv_gxt_3000mtplus230_runtime
+  ups_cong_suat: sensor.ups_vertiv_gxt_3000mtplus230_load_power
+  ups_o_p1: binary_sensor.ups_vertiv_gxt_3000mtplus230_programmable_outlet_p1
+
+trigger:
+  - platform: state
+    entity_id: binary_sensor.ups_vertiv_gxt_3000mtplus230_on_battery
+    from: "off"
+    to: "on"
+    id: mat_dien
+
+  - platform: state
+    entity_id: binary_sensor.ups_vertiv_gxt_3000mtplus230_on_battery
+    from: "on"
+    to: "off"
+    id: co_dien_lai
+
+  - platform: numeric_state
+    entity_id: sensor.ups_vertiv_gxt_3000mtplus230_battery
+    below: 50
+    id: pin_50
+
+  - platform: numeric_state
+    entity_id: sensor.ups_vertiv_gxt_3000mtplus230_battery
+    below: 25
+    id: pin_25
+
+  - platform: state
+    entity_id: binary_sensor.ups_vertiv_gxt_3000mtplus230_programmable_outlet_p1
+    from: "on"
+    to: "off"
+    id: shed_o_p1
+
+condition: []
+
+action:
+  - choose:
+      # ---------------------------------------------------------- mất điện ---
+      - conditions:
+          - condition: trigger
+            id: mat_dien
+        sequence:
+          - service: "{{ dien_thoai }}"
+            data:
+              title: ⚡ Mất điện lưới
+              message: >-
+                UPS đang chạy pin. Pin {{ states(ups_pin) }}%, dự phòng khoảng
+                {{ states(ups_runtime) }} phút, tải {{ states(ups_cong_suat) }} W.
+              data:
+                tag: ups_nguon
+                channel: UPS
+                importance: high
+                sticky: true
+                color: "#f44336"
+                notification_icon: mdi:power-plug-off
+                url: /ups
+                clickAction: /ups
+                push:
+                  interruption-level: time-sensitive
+
+      # ------------------------------------------------------ có điện lại ---
+      - conditions:
+          - condition: trigger
+            id: co_dien_lai
+        sequence:
+          - service: "{{ dien_thoai }}"
+            data:
+              title: ✅ Đã có điện lưới
+              message: >-
+                UPS trở lại chạy điện lưới. Pin còn {{ states(ups_pin) }}%
+                {%- if is_state(ups_o_p1, 'off') %}, ổ cắm P1 vẫn đang ngắt{% endif %}.
+              data:
+                # cùng tag nên thông báo này THAY THẾ cảnh báo mất điện,
+                # không để lại thông báo cũ gây hiểu nhầm
+                tag: ups_nguon
+                channel: UPS
+                color: "#4caf50"
+                notification_icon: mdi:power-plug
+                url: /ups
+                clickAction: /ups
+
+      # ------------------------------------------- pin xuống 50% (khi chạy pin) ---
+      - conditions:
+          - condition: trigger
+            id: pin_50
+          - condition: state
+            entity_id: binary_sensor.ups_vertiv_gxt_3000mtplus230_on_battery
+            state: "on"
+        sequence:
+          - service: "{{ dien_thoai }}"
+            data:
+              title: 🔋 Pin UPS còn 50%
+              message: >-
+                Vẫn đang mất điện. Dự phòng khoảng {{ states(ups_runtime) }} phút nữa.
+              data:
+                tag: ups_pin_yeu
+                channel: UPS
+                importance: high
+                color: "#ff9800"
+                url: /ups
+                clickAction: /ups
+
+      # ------------------------------------------- pin xuống 25% (sắp tắt máy) ---
+      - conditions:
+          - condition: trigger
+            id: pin_25
+          - condition: state
+            entity_id: binary_sensor.ups_vertiv_gxt_3000mtplus230_on_battery
+            state: "on"
+        sequence:
+          - service: "{{ dien_thoai }}"
+            data:
+              title: 🚨 Pin UPS còn 25% — máy tính sắp tự tắt
+              message: >-
+                Máy tính sẽ tự tắt an toàn khi chạm ngưỡng đã đặt.
+                Dự phòng khoảng {{ states(ups_runtime) }} phút.
+              data:
+                tag: ups_pin_yeu
+                channel: UPS
+                importance: high
+                sticky: true
+                color: "#f44336"
+                push:
+                  interruption-level: critical
+                url: /ups
+                clickAction: /ups
+
+      # ------------------------------------------------ UPS tự ngắt ổ cắm P1 ---
+      - conditions:
+          - condition: trigger
+            id: shed_o_p1
+        sequence:
+          - service: "{{ dien_thoai }}"
+            data:
+              title: 🔌 UPS đã ngắt ổ cắm P1
+              message: >-
+                Các thiết bị cắm ở dãy P1 vừa mất điện. UPS làm vậy để dành pin
+                cho tải quan trọng.
+              data:
+                tag: ups_o_p1
+                channel: UPS
+                color: "#ff9800"
+                url: /ups
+                clickAction: /ups
+
+# =============================================================================
+#  GỬI TỚI NHIỀU THIẾT BỊ
+#  Đổi dòng `dien_thoai` thành một nhóm thông báo. Thêm vào configuration.yaml:
+#
+#    notify:
+#      - name: ca_nha
+#        platform: group
+#        services:
+#          - service: mobile_app_dien_thoai_1
+#          - service: mobile_app_dien_thoai_2
+#
+#  Rồi đặt:  dien_thoai: notify.ca_nha
+#
+#  MUỐN THỬ NGAY MÀ KHÔNG CẦN CÚP ĐIỆN
+#  Công cụ cho nhà phát triển → tab Trạng thái → đặt
+#  binary_sensor.ups_vertiv_gxt_3000mtplus230_on_battery = on
+#  (giá trị này sẽ bị ghi đè ở lần agent đẩy dữ liệu kế tiếp — vô hại)
+# =============================================================================

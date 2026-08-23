@@ -616,3 +616,82 @@ Dấu hiệu nhận biết: góc trên bên phải trang *Bộ tích hợp* có 
 
 Cách sửa: bấm **Hiển thị** → chọn MQTT → **Bật**. Discovery là retained nên HA đọc lại
 được ngay, không cần chạy lại agent.
+
+---
+
+# Tiếng Việt nằm ở đâu?
+
+Nguyên tắc: **`.ps1` chỉ đẩy số liệu và mã (alias) thuần ASCII — toàn bộ chữ tiếng Việt
+nằm trong panel.**
+
+```
+UpsHid.ps1                    ups-panel-card.js
+QMOD = 'L'  ->  'Line'   ->   MODE_LABEL.Line  ->  "Điện lưới"
+         (mã)     (alias)          (bảng dịch)        (hiển thị)
+```
+
+Lý do không đặt tiếng Việt trong `.ps1`: **PowerShell 5.1 đọc file `.ps1` không có BOM
+theo bảng mã ANSI**, làm hỏng dấu. Đã đo thực tế:
+
+```
+File UTF-8 KHÔNG BOM -> 'Äiá»‡n lÆ°á»›i â€” bÃ¬nh thÆ°á»ng'   HỎNG
+File UTF-8 CÓ BOM    -> 'Điện lưới — bình thường'          ĐÚNG
+```
+
+Giữ `.ps1` thuần ASCII thì không bao giờ dính lỗi này, kể cả khi editor vô tình
+lược mất BOM. Muốn đổi câu chữ chỉ cần sửa `MODE_LABEL` trong `ups-panel-card.js`.
+
+Bảng alias (`$Global:UpsModeMap` trong `UpsHid.ps1`):
+
+| Mã QMOD | Alias | Hiển thị trên panel |
+|---|---|---|
+| `L` | `Line` | Điện lưới |
+| `B` | `Battery` | Chạy pin |
+| `Y` | `Bypass` | Chạy bypass |
+| `F` | `Fault` | Lỗi UPS |
+| `E` | `ECO` | Tiết kiệm điện |
+| `C` | `Converter` | Chuyển đổi tần số |
+| `S` | `Standby` | Chờ |
+| `P` | `PowerOn` | Đang khởi động |
+| `T` | `BatteryTest` | Đang kiểm tra pin |
+| `D` | `Shutdown` | Đang tắt |
+
+Alias lạ (firmware khác) sẽ được hiện nguyên văn thay vì nuốt mất thông tin.
+
+---
+
+# Thông báo lên điện thoại khi mất điện
+
+File mẫu: [`homeassistant/automation-ups.yaml`](homeassistant/automation-ups.yaml)
+
+### Cài đặt
+
+1. HA → **Cài đặt → Tự động hoá & Cảnh báo → Tạo tự động hoá**
+2. Menu ⋮ góc trên bên phải → **Chỉnh sửa trong YAML**
+3. Xoá nội dung mẫu, dán toàn bộ file trên vào
+4. Sửa **duy nhất** dòng `dien_thoai:` cho đúng máy của bạn
+5. Lưu
+
+Tìm tên dịch vụ: **Công cụ cho nhà phát triển → Hành động** → gõ `notify.` → chọn dòng
+dạng `notify.mobile_app_<tên_điện_thoại>`.
+
+### Năm tình huống được báo
+
+| Khi nào | Thông báo |
+|---|---|
+| Chuyển sang chạy pin | ⚡ Mất điện lưới — kèm % pin, số phút dự phòng, công suất tải |
+| Pin còn 50% (đang chạy pin) | 🔋 Cảnh báo sớm |
+| Pin còn 25% (đang chạy pin) | 🚨 Máy tính sắp tự tắt |
+| UPS tự ngắt ổ P1 | 🔌 Thiết bị ở dãy P1 vừa mất điện |
+| Có điện lưới trở lại | ✅ Đã có điện — kèm % pin còn lại |
+
+Thông báo "mất điện" và "có điện lại" dùng chung `tag: ups_nguon`, nên thông báo mới
+**thay thế** cái cũ — không để lại cảnh báo mất điện lơ lửng sau khi điện đã về.
+
+Bấm vào thông báo sẽ mở thẳng panel `/ups`.
+
+### Thử ngay mà không cần cúp điện
+
+**Công cụ cho nhà phát triển → Trạng thái** → đặt
+`binary_sensor.ups_vertiv_gxt_3000mtplus230_on_battery` = `on`.
+Giá trị này bị ghi đè ở lần agent đẩy dữ liệu kế tiếp nên hoàn toàn vô hại.

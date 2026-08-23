@@ -1,38 +1,41 @@
 /*!
  * ups-panel-card.js
- * Panel quan ly UPS Vertiv / Liebert GXT-3000MTPLUS230 cho Home Assistant.
+ * Bảng theo dõi UPS Vertiv / Liebert GXT-3000MTPLUS230 cho Home Assistant.
  *
- * CHI DOC - khong co nut dieu khien nao. Du lieu den tu Windows agent
- * (Ups-Monitor.ps1) day len qua MQTT Discovery.
+ * CHỈ ĐỌC — không có nút điều khiển nào. Dữ liệu đến từ agent trên máy Windows
+ * (Ups-Monitor.ps1) đẩy lên qua MQTT Discovery.
  *
  * Hai tab:
- *   1. Thong tin  - trang thai va thong so hien tai
- *   2. Nhat ky    - lich su mat dien / co dien lai
+ *   1. Thông tin — trạng thái và thông số hiện tại
+ *   2. Nhật ký   — lịch sử mất điện / có điện lại
  *
- * Card TU DO tien to entity nen thuong khong can cau hinh gi:
+ * Card tự dò tiền tố entity nên thường không cần cấu hình gì:
  *   type: custom:ups-panel-card
- * Chi dat `prefix` khi muon ep thu cong (vi du co 2 bo UPS).
+ * Chỉ đặt `prefix` khi muốn ép thủ công (ví dụ có 2 bộ UPS).
  */
 
-const UPS_CARD_VERSION = '3.1.0';
+const UPS_CARD_VERSION = '3.2.0';
 
-// Mau ma theo che do QMOD do agent gui len (mode_text bat dau bang tu khoa nay)
-const MODE_STYLE = [
-  { match: /^Line/i,      cls: 'ok',   label: 'Dien luoi' },
-  { match: /^Battery/i,   cls: 'crit', label: 'Chay pin' },
-  { match: /^Bypass/i,    cls: 'warn', label: 'Bypass' },
-  { match: /^Fault/i,     cls: 'crit', label: 'Loi' },
-  { match: /^ECO/i,       cls: 'ok',   label: 'ECO' },
-  { match: /^Converter/i, cls: 'ok',   label: 'Converter' },
-  { match: /^Standby/i,   cls: 'warn', label: 'Standby' },
-  { match: /^Power On/i,  cls: 'warn', label: 'Dang khoi dong' },
-  { match: /^Shutdown/i,  cls: 'crit', label: 'Shutdown' },
-];
+// Agent chỉ đẩy MÃ (alias) thuần ASCII — toàn bộ phần chữ tiếng Việt nằm ở đây.
+// Nhờ vậy file .ps1 không phụ thuộc bảng mã, và muốn đổi câu chữ chỉ sửa một chỗ.
+// Alias do $Global:UpsModeMap trong UpsHid.ps1 sinh ra từ mã QMOD.
+const MODE_LABEL = {
+  Line:        { cls: 'ok',   label: 'Điện lưới' },
+  Battery:     { cls: 'crit', label: 'Chạy pin' },
+  Bypass:      { cls: 'warn', label: 'Chạy bypass' },
+  Fault:       { cls: 'crit', label: 'Lỗi UPS' },
+  ECO:         { cls: 'ok',   label: 'Tiết kiệm điện' },
+  Converter:   { cls: 'ok',   label: 'Chuyển đổi tần số' },
+  Standby:     { cls: 'warn', label: 'Chờ' },
+  PowerOn:     { cls: 'warn', label: 'Đang khởi động' },
+  BatteryTest: { cls: 'warn', label: 'Đang kiểm tra pin' },
+  Shutdown:    { cls: 'crit', label: 'Đang tắt' },
+};
 
-// Home Assistant sinh entity_id tu TEN THIET BI + TEN ENTITY, bo qua obj_id.
-// Vi du: thiet bi "UPS Vertiv GXT-3000MTPLUS230" + entity "Status"
-//        -> sensor.ups_vertiv_gxt_3000mtplus230_status
-// Bang nay anh xa khoa logic -> duoi entity_id do HA sinh ra tu ten.
+// Home Assistant BỎ QUA obj_id trong MQTT discovery và tự sinh entity_id từ
+// tên thiết bị + tên entity. Ví dụ: thiết bị "UPS Vertiv GXT-3000MTPLUS230"
+// + entity "Status" -> sensor.ups_vertiv_gxt_3000mtplus230_status
+// Bảng này ánh xạ khoá logic -> đuôi entity_id do HA sinh ra từ nhãn.
 const NAME_SUFFIX = {
   battery_percent: 'battery',
   runtime_minutes: 'runtime',
@@ -43,21 +46,21 @@ const NAME_SUFFIX = {
   mode_text: 'status',
   has_warning: 'fault',
   outlet_p1: 'programmable_outlet_p1',
-  // cac khoa con lai trung ten nen khong can anh xa:
+  // Các khoá còn lại trùng tên nên không cần ánh xạ:
   // input_voltage, output_voltage, battery_voltage, output_current,
   // temperature, power_events, on_battery
 };
 
-// Khoa dung de do tien to vi no duy nhat va chac chan ton tai
+// Khoá dùng để dò tiền tố vì nó duy nhất và chắc chắn tồn tại
 const PROBE_KEY = 'power_events';
 
 function fmtDuration(sec) {
   sec = Math.max(0, Math.round(sec || 0));
-  if (sec < 60) return `${sec} giay`;
+  if (sec < 60) return `${sec} giây`;
   const m = Math.floor(sec / 60), s = sec % 60;
-  if (m < 60) return s ? `${m} phut ${s} giay` : `${m} phut`;
+  if (m < 60) return s ? `${m} phút ${s} giây` : `${m} phút`;
   const h = Math.floor(m / 60), mm = m % 60;
-  return mm ? `${h} gio ${mm} phut` : `${h} gio`;
+  return mm ? `${h} giờ ${mm} phút` : `${h} giờ`;
 }
 
 function fmtWhen(iso) {
@@ -81,7 +84,9 @@ class UpsPanelCard extends HTMLElement {
   }
 
   setConfig(config) {
-    this._config = Object.assign({ prefix: 'ups', name: 'UPS' }, config || {});
+    this._config = Object.assign(
+      { prefix: 'ups', name: 'UPS Vertiv GXT-3000' }, config || {}
+    );
     this._built = false;
     if (this.shadowRoot) this.shadowRoot.innerHTML = '';
   }
@@ -94,12 +99,12 @@ class UpsPanelCard extends HTMLElement {
     this._update();
   }
 
-  // ------------------------------------------------------------ helpers ----
+  // ------------------------------------------------------------ tiện ích ----
 
   /**
-   * Do tien to that cua bo entity. Uu tien tien to trong cau hinh; neu khong
-   * khop thi tu tim entity ket thuc bang `_power_events` de suy ra tien to
-   * do HA sinh. Nho vay card chay duoc bat ke HA dat ten kieu nao.
+   * Dò tiền tố thật của bộ entity. Ưu tiên tiền tố trong cấu hình; nếu không
+   * khớp thì tự tìm entity kết thúc bằng `_power_events` để suy ra tiền tố do
+   * HA sinh. Nhờ vậy card chạy được bất kể HA đặt tên kiểu nào.
    */
   _resolvePrefix() {
     const cfg = this._config.prefix;
@@ -112,7 +117,7 @@ class UpsPanelCard extends HTMLElement {
     return cfg;
   }
 
-  /** Thu ca ten theo khoa lan ten do HA sinh tu nhan hien thi. */
+  /** Thử cả tên theo khoá lẫn tên do HA sinh từ nhãn hiển thị. */
   _id(domain, key) {
     const pfx = this._pfx || this._config.prefix;
     const direct = `${domain}.${pfx}_${key}`;
@@ -123,7 +128,7 @@ class UpsPanelCard extends HTMLElement {
       const mapped = `${domain}.${pfx}_${alt}`;
       if (this._hass && this._hass.states[mapped]) return mapped;
     }
-    return direct;   // de thong bao loi hien ten dang chuan, de doc
+    return direct;   // để thông báo lỗi hiện tên dạng chuẩn, dễ đọc
   }
 
   _state(domain, key) {
@@ -162,7 +167,7 @@ class UpsPanelCard extends HTMLElement {
     this._update();
   }
 
-  // -------------------------------------------------------------- render ---
+  // ------------------------------------------------------------- dựng DOM ---
   _build() {
     const c = this._config;
     this.shadowRoot.innerHTML = `
@@ -195,7 +200,7 @@ class UpsPanelCard extends HTMLElement {
                 gap:6px; margin-bottom:16px; }
         .node { text-align:center; padding:10px 6px; border-radius:10px;
                 background:var(--secondary-background-color); }
-        .node .lbl { font-size:.7rem; color:var(--secondary-text-color); text-transform:uppercase; letter-spacing:.04em; }
+        .node .lbl { font-size:.7rem; color:var(--secondary-text-color); letter-spacing:.02em; }
         .node .val { font-size:1.05rem; font-weight:600; color:var(--primary-text-color); margin-top:3px; }
         .node .sub { font-size:.72rem; color:var(--secondary-text-color); margin-top:2px; }
         .node.dim { opacity:.45; }
@@ -210,9 +215,9 @@ class UpsPanelCard extends HTMLElement {
         .bar { height:12px; border-radius:6px; background:var(--divider-color); overflow:hidden; }
         .bar > i { display:block; height:100%; border-radius:6px; transition:width .5s ease, background .3s; }
 
-        .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(108px,1fr)); gap:8px; }
+        .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(112px,1fr)); gap:8px; }
         .cell { background:var(--secondary-background-color); border-radius:8px; padding:9px 10px; }
-        .cell .k { font-size:.68rem; color:var(--secondary-text-color); text-transform:uppercase; letter-spacing:.04em; }
+        .cell .k { font-size:.68rem; color:var(--secondary-text-color); letter-spacing:.02em; }
         .cell .v { font-size:1rem; font-weight:600; color:var(--primary-text-color); margin-top:3px; }
 
         .outlet { display:flex; align-items:center; justify-content:space-between; gap:12px;
@@ -242,7 +247,7 @@ class UpsPanelCard extends HTMLElement {
         .tag.shut { background:rgba(244,67,54,.18); color:#c62828; }
         .tag.live { background:rgba(244,67,54,.22); color:#c62828; }
 
-        .empty { text-align:center; padding:28px 12px; color:var(--secondary-text-color); font-size:.85rem; }
+        .empty { text-align:center; padding:28px 12px; color:var(--secondary-text-color); font-size:.85rem; line-height:1.7; }
         .foot { margin-top:12px; font-size:.7rem; color:var(--secondary-text-color); text-align:right; }
       </style>
 
@@ -256,8 +261,8 @@ class UpsPanelCard extends HTMLElement {
         </div>
 
         <div class="tabs">
-          <button class="tab sel" id="tab-info">Thong tin</button>
-          <button class="tab" id="tab-log">Nhat ky</button>
+          <button class="tab sel" id="tab-info">Thông tin</button>
+          <button class="tab" id="tab-log">Nhật ký</button>
         </div>
 
         <div class="banner off" id="banner"></div>
@@ -265,7 +270,7 @@ class UpsPanelCard extends HTMLElement {
         <div id="pane-info">
           <div class="flow">
             <div class="node" id="n-in">
-              <div class="lbl">Dien luoi</div>
+              <div class="lbl">Điện lưới</div>
               <div class="val" id="in-v">--</div>
               <div class="sub" id="in-f">--</div>
             </div>
@@ -277,7 +282,7 @@ class UpsPanelCard extends HTMLElement {
             </div>
             <div class="arrow" id="a2">&#8594;</div>
             <div class="node" id="n-out">
-              <div class="lbl">Dau ra</div>
+              <div class="lbl">Đầu ra</div>
               <div class="val" id="out-v">--</div>
               <div class="sub" id="out-f">--</div>
             </div>
@@ -292,17 +297,17 @@ class UpsPanelCard extends HTMLElement {
           </div>
 
           <div class="grid">
-            <div class="cell"><div class="k">Tai</div>         <div class="v" id="m-load">--</div></div>
-            <div class="cell"><div class="k">Cong suat</div>   <div class="v" id="m-watt">--</div></div>
-            <div class="cell"><div class="k">Dong ra</div>     <div class="v" id="m-amp">--</div></div>
-            <div class="cell"><div class="k">Dien ap pin</div> <div class="v" id="m-bv">--</div></div>
-            <div class="cell"><div class="k">Nhiet do</div>    <div class="v" id="m-temp">--</div></div>
-            <div class="cell"><div class="k">Tan so vao</div>  <div class="v" id="m-inf">--</div></div>
+            <div class="cell"><div class="k">Tải</div>           <div class="v" id="m-load">--</div></div>
+            <div class="cell"><div class="k">Công suất</div>     <div class="v" id="m-watt">--</div></div>
+            <div class="cell"><div class="k">Dòng ra</div>       <div class="v" id="m-amp">--</div></div>
+            <div class="cell"><div class="k">Điện áp pin</div>   <div class="v" id="m-bv">--</div></div>
+            <div class="cell"><div class="k">Nhiệt độ</div>      <div class="v" id="m-temp">--</div></div>
+            <div class="cell"><div class="k">Tần số vào</div>    <div class="v" id="m-inf">--</div></div>
           </div>
 
           <div class="outlet" id="outlet-row">
             <div>
-              <div class="on">O cam lap trinh P1</div>
+              <div class="on">Ổ cắm lập trình P1</div>
               <div class="os" id="outlet-sub">--</div>
             </div>
             <div class="dot na" id="outlet-dot">--</div>
@@ -311,9 +316,9 @@ class UpsPanelCard extends HTMLElement {
 
         <div id="pane-log" style="display:none">
           <div class="sum">
-            <div class="cell"><div class="k">So lan mat dien</div><div class="v" id="s-count">--</div></div>
-            <div class="cell"><div class="k">Tong thoi gian</div> <div class="v" id="s-total">--</div></div>
-            <div class="cell"><div class="k">Lan lau nhat</div>   <div class="v" id="s-max">--</div></div>
+            <div class="cell"><div class="k">Số lần mất điện</div><div class="v" id="s-count">--</div></div>
+            <div class="cell"><div class="k">Tổng thời gian</div> <div class="v" id="s-total">--</div></div>
+            <div class="cell"><div class="k">Lần lâu nhất</div>   <div class="v" id="s-max">--</div></div>
           </div>
           <div id="ev-list"></div>
         </div>
@@ -328,11 +333,12 @@ class UpsPanelCard extends HTMLElement {
     this._built = true;
   }
 
+  // ------------------------------------------------------------ cập nhật ---
   _update() {
     if (!this._hass || !this._built) return;
     const $ = (id) => this.shadowRoot.getElementById(id);
 
-    // Do lai tien to moi lan cap nhat: entity co the xuat hien muon hon card
+    // Dò lại tiền tố mỗi lần cập nhật: entity có thể xuất hiện muộn hơn card
     this._pfx = this._resolvePrefix();
 
     const modeEnt = this._hass.states[this._id('sensor', 'mode_text')];
@@ -340,63 +346,64 @@ class UpsPanelCard extends HTMLElement {
     const onBattery = this._state('binary_sensor', 'on_battery') === 'on';
     const hasFault = this._state('binary_sensor', 'has_warning') === 'on';
 
-    // Phan biet 2 tinh huong hoan toan khac nhau:
-    //   missing = entity CHUA TON TAI  -> HA chua doc duoc MQTT discovery
-    //   unavail = entity CO nhung mat du lieu -> agent tren may Windows khong chay
+    // Phân biệt 2 tình huống hoàn toàn khác nhau:
+    //   missing = entity CHƯA TỒN TẠI  -> HA chưa đọc được MQTT discovery
+    //   unavail = entity CÓ nhưng mất dữ liệu -> agent trên máy Windows không chạy
     const missing = !modeEnt;
     const unavail = !missing && (modeText === 'unavailable' || modeText === 'unknown');
     const offline = missing || unavail;
 
-    // --- badge trang thai ---
-    let style = { cls: 'dead', label: 'Mat ket noi' };
+    // --- nhãn trạng thái ---
+    let style = { cls: 'dead', label: 'Mất kết nối' };
     if (!offline) {
-      style = MODE_STYLE.find((m) => m.match.test(modeText)) || { cls: 'warn', label: modeText };
+      // Alias lạ (firmware khác) thì hiện nguyên văn thay vì nuốt mất thông tin
+      style = MODE_LABEL[modeText] || { cls: 'warn', label: modeText };
     }
-    if (hasFault && !offline) style = { cls: 'crit', label: 'LOI UPS' };
+    if (hasFault && !offline) style = { cls: 'crit', label: 'LỖI UPS' };
     const badge = $('badge');
     badge.className = `badge ${style.cls}`;
     badge.textContent = style.label;
 
-    // --- banner canh bao ---
+    // --- dải cảnh báo ---
     const banner = $('banner');
     if (missing) {
-      // Liet ke han ten entity lien quan de biet HA da tao gi (neu co)
       const hits = Object.keys(this._hass.states)
         .filter((id) => /(^|\.)ups[_.]|vertiv/i.test(id))
         .sort();
       const listed = hits.slice(0, 15).map((id) => `<code>${id}</code>`).join('<br>');
-      const more = hits.length > 15 ? `<br>... va ${hits.length - 15} cai nua` : '';
+      const more = hits.length > 15 ? `<br>… và ${hits.length - 15} cái nữa` : '';
       const found = hits.length
-        ? `<br><br><b>Entity lien quan dang co trong HA (${hits.length}):</b><br>${listed}${more}`
-        : `<br><br>Khong co entity nao ten lien quan toi UPS trong HA.`;
+        ? `<br><br><b>Entity liên quan đang có trong HA (${hits.length}):</b><br>${listed}${more}`
+        : `<br><br>Không có entity nào tên liên quan tới UPS trong HA.`;
 
       banner.className = 'banner bad show';
       banner.innerHTML =
-        `Khong tim thay <code>${this._id('sensor', 'mode_text')}</code> trong Home Assistant.` +
+        `Không tìm thấy <code>${this._id('sensor', 'mode_text')}</code> trong Home Assistant.` +
         found +
-        `<br><br><b>Neu danh sach tren trong:</b> HA chua doc MQTT discovery. Kiem tra ` +
-        `<b>Cai dat &rarr; Thiet bi &amp; Dich vu &rarr; MQTT &rarr; Cau hinh</b>: ` +
-        `bat <i>Enable discovery</i> va de <i>Discovery prefix</i> = <code>homeassistant</code>.` +
-        `<br><b>Neu co ten khac la:</b> HA da tao entity nhung dat ten khac - bao lai ten do ` +
-        `de sua <code>prefix</code> cua card cho khop.`;
+        `<br><br><b>Nếu danh sách trên trống:</b> HA chưa đọc MQTT discovery. Kiểm tra ` +
+        `<b>Cài đặt → Thiết bị &amp; Dịch vụ → MQTT → Cấu hình</b>: bật <i>Enable discovery</i> ` +
+        `và để <i>Discovery prefix</i> = <code>homeassistant</code>.` +
+        `<br><b>Nếu có tên khác lạ:</b> HA đã tạo entity nhưng đặt tên khác — báo lại tên đó ` +
+        `để sửa <code>prefix</code> của card cho khớp.`;
     } else if (unavail) {
       banner.className = 'banner off show';
       banner.innerHTML =
-        `Entity da co trong HA nhung dang <b>unavailable</b>. ` +
-        `Nghia la agent <code>Ups-Monitor.ps1</code> tren may Windows khong chay, ` +
-        `hoac may do dang tat, hoac mat ket noi toi broker MQTT.`;
+        `Entity đã có trong HA nhưng đang <b>unavailable</b>. Nghĩa là agent ` +
+        `<code>Ups-Monitor.ps1</code> trên máy Windows không chạy, hoặc máy đó đang tắt, ` +
+        `hoặc mất kết nối tới broker MQTT.`;
     } else if (hasFault) {
       banner.className = 'banner bad show';
-      banner.textContent = 'UPS dang bao loi (QWS khac 0). Kiem tra man hinh UPS.';
+      banner.textContent = 'UPS đang báo lỗi. Kiểm tra màn hình trên máy UPS.';
     } else if (onBattery) {
       banner.className = 'banner bad show';
-      banner.textContent = 'MAT DIEN LUOI - UPS dang chay pin. May se tu tat khi cham nguong da dat.';
+      banner.textContent =
+        'MẤT ĐIỆN LƯỚI — UPS đang chạy pin. Máy tính sẽ tự tắt an toàn khi chạm ngưỡng đã đặt.';
     } else {
       banner.className = 'banner off';
       banner.textContent = '';
     }
 
-    // --- tab thong tin ---
+    // --- sơ đồ dòng điện ---
     $('in-v').textContent = this._fmt('input_voltage', 'V', 1);
     $('in-f').textContent = this._fmt('input_freq', 'Hz', 1);
     $('out-v').textContent = this._fmt('output_voltage', 'V', 1);
@@ -408,16 +415,19 @@ class UpsPanelCard extends HTMLElement {
     $('a1').className = 'arrow' + (!onBattery && !offline ? ' live' : '');
     $('a2').className = 'arrow' + (offline ? '' : (onBattery ? ' batt' : ' live'));
 
+    // --- pin ---
     const pct = this._num('battery_percent', 0);
     const rt = this._num('runtime_minutes', 0);
     $('b-pct').textContent = pct === null ? '--' : `${pct}%`;
-    $('b-rt').textContent = rt === null ? 'Thoi gian du phong: --'
-      : `Du phong ~${rt >= 60 ? `${Math.floor(rt / 60)}h ${rt % 60}p` : `${rt} phut`}`;
+    $('b-rt').textContent = rt === null
+      ? 'Thời gian dự phòng: --'
+      : `Dự phòng ~${rt >= 60 ? `${Math.floor(rt / 60)} giờ ${rt % 60} phút` : `${rt} phút`}`;
     const bar = $('b-bar');
     const p = pct === null ? 0 : Math.max(0, Math.min(100, pct));
     bar.style.width = `${p}%`;
     bar.style.background = p >= 60 ? '#4caf50' : (p >= 30 ? '#ff9800' : '#f44336');
 
+    // --- lưới thông số ---
     $('m-load').textContent = this._fmt('load_percent', '%', 0);
     $('m-watt').textContent = this._fmt('load_watts', 'W', 0);
     $('m-amp').textContent = this._fmt('output_current', 'A', 1);
@@ -425,32 +435,32 @@ class UpsPanelCard extends HTMLElement {
     $('m-temp').textContent = this._fmt('temperature', '°C', 1);
     $('m-inf').textContent = this._fmt('input_freq', 'Hz', 1);
 
-    // --- o cam P1 (chi doc) ---
+    // --- ổ cắm P1 (chỉ đọc) ---
     const outState = this._state('binary_sensor', 'outlet_p1');
     const dot = $('outlet-dot');
     if (outState === 'on') {
-      dot.className = 'dot on'; dot.textContent = 'DANG BAT';
-      $('outlet-sub').textContent = 'Dang cap dien cho tai khong thiet yeu';
+      dot.className = 'dot on'; dot.textContent = 'ĐANG BẬT';
+      $('outlet-sub').textContent = 'Đang cấp điện cho tải không thiết yếu';
     } else if (outState === 'off') {
-      dot.className = 'dot offx'; dot.textContent = 'DA NGAT';
-      $('outlet-sub').textContent = 'UPS da tu ngat de danh pin cho tai quan trong';
+      dot.className = 'dot offx'; dot.textContent = 'ĐÃ NGẮT';
+      $('outlet-sub').textContent = 'UPS đã tự ngắt để dành pin cho tải quan trọng';
     } else {
       dot.className = 'dot na'; dot.textContent = '--';
-      $('outlet-sub').textContent = 'Khong ro trang thai';
+      $('outlet-sub').textContent = 'Không rõ trạng thái';
     }
 
-    // --- tab nhat ky ---
     this._renderLog();
 
     const src = this._hass.states[this._id('sensor', 'mode_text')];
     $('foot').textContent = src && (src.last_updated || src.last_changed)
-      ? `Cap nhat: ${new Date(src.last_updated || src.last_changed).toLocaleTimeString()}`
+      ? `Cập nhật: ${new Date(src.last_updated || src.last_changed).toLocaleTimeString('vi-VN')}`
       : '';
   }
 
+  // ------------------------------------------------------------- nhật ký ---
   _renderLog() {
     const $ = (id) => this.shadowRoot.getElementById(id);
-    const evs = this._events().slice().reverse();   // moi nhat len dau
+    const evs = this._events().slice().reverse();   // mới nhất lên đầu
 
     const done = evs.filter((e) => !e.ongoing);
     const total = done.reduce((a, e) => a + (e.duration_s || 0), 0);
@@ -461,22 +471,23 @@ class UpsPanelCard extends HTMLElement {
 
     const box = $('ev-list');
     if (!evs.length) {
-      box.innerHTML = `<div class="empty">Chua ghi nhan lan mat dien nao.<br>
-        Nhat ky duoc luu tai <code>logs/power-events.json</code> va song sot qua reboot.</div>`;
+      box.innerHTML = `<div class="empty">Chưa ghi nhận lần mất điện nào.<br>
+        Nhật ký được lưu tại <code>logs/power-events.json</code> trên máy Windows
+        và còn nguyên sau khi khởi động lại.</div>`;
       return;
     }
 
     box.innerHTML = evs.map((e) => {
       const live = !!e.ongoing;
       const tags = [];
-      if (live) tags.push('<span class="tag live">DANG DIEN RA</span>');
-      if (e.outlet_shed) tags.push('<span class="tag shed">O P1 bi ngat</span>');
-      if (e.shutdown_fired) tags.push('<span class="tag shut">Da tu tat may</span>');
+      if (live) tags.push('<span class="tag live">ĐANG DIỄN RA</span>');
+      if (e.outlet_shed) tags.push('<span class="tag shed">Ổ P1 bị ngắt</span>');
+      if (e.shutdown_fired) tags.push('<span class="tag shut">Đã tự tắt máy</span>');
 
       const det = [
         `Pin ${e.battery_start}% &rarr; ${e.battery_end}%`,
-        `thap nhat ${e.voltage_min}V`,
-        `tai dinh ${e.load_max}%`,
+        `thấp nhất ${e.voltage_min} V`,
+        `tải đỉnh ${e.load_max}%`,
       ].join(' &middot; ');
 
       return `
@@ -492,8 +503,8 @@ class UpsPanelCard extends HTMLElement {
   }
 }
 
-// Card duoc nap toan cuc qua frontend.add_extra_js_url nen co the bi nap 2 lan
-// (vi du sau khi reload integration). Dinh nghia trung se nem loi -> phai chan.
+// Card được nạp toàn cục nên có thể bị nạp 2 lần (ví dụ sau khi reload
+// integration). Định nghĩa trùng sẽ ném lỗi -> phải chặn.
 if (!customElements.get('ups-panel-card')) {
   customElements.define('ups-panel-card', UpsPanelCard);
 
@@ -501,7 +512,7 @@ if (!customElements.get('ups-panel-card')) {
   window.customCards.push({
     type: 'ups-panel-card',
     name: 'UPS Panel Card',
-    description: 'Panel theo doi UPS Vertiv/Liebert GXT: thong so + nhat ky mat dien.',
+    description: 'Bảng theo dõi UPS Vertiv/Liebert GXT: thông số + nhật ký mất điện.',
     preview: true,
   });
 }

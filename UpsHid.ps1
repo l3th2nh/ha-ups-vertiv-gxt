@@ -67,16 +67,19 @@ function Invoke-UpsCommand {
   [UpsHid]::Ask($p, $Command, $TimeoutMs)
 }
 
+# Chi day MA (alias) thuan ASCII - KHONG dat tieng Viet o day.
+# Phan dich sang tieng Viet nam trong panel (ups-panel-card.js), nho vay
+# file .ps1 khong phu thuoc bang ma va PowerShell 5.1 doc luon dung.
 $Global:UpsModeMap = @{
-  'P' = 'Power On (dang khoi dong)'
+  'P' = 'PowerOn'
   'S' = 'Standby'
   'Y' = 'Bypass'
-  'L' = 'Line - chay dien luoi (BINH THUONG)'
-  'B' = 'Battery - DANG CHAY PIN'
-  'T' = 'Battery Test'
-  'F' = 'Fault - LOI'
-  'E' = 'ECO mode'
-  'C' = 'Converter mode'
+  'L' = 'Line'
+  'B' = 'Battery'
+  'T' = 'BatteryTest'
+  'F' = 'Fault'
+  'E' = 'ECO'
+  'C' = 'Converter'
   'D' = 'Shutdown'
 }
 
@@ -99,7 +102,7 @@ function Get-UpsStatus {
   [pscustomobject]@{
     Timestamp        = (Get-Date)
     Mode             = $modeChar
-    ModeText         = $(if ($Global:UpsModeMap.ContainsKey($modeChar)) { $Global:UpsModeMap[$modeChar] } else { "Unknown ($modeChar)" })
+    ModeText         = $(if ($Global:UpsModeMap.ContainsKey($modeChar)) { $Global:UpsModeMap[$modeChar] } else { "Unknown-$modeChar" })
     OnBattery        = ($modeChar -eq 'B')
     InputVoltage     = [double]$g[0]
     InputFreq        = [double]$g[1]

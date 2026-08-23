@@ -1,16 +1,16 @@
 /*!
  * ups-panel.js
- * Panel toan trang cho Home Assistant, dang ky tai /ups boi integration ups_vertiv.
+ * Trang toàn màn hình cho Home Assistant, được integration ups_vertiv đăng ký tại /ups.
  *
- * Panel nay KHONG ve lai giao dien - no tu import roi boc lai <ups-panel-card>
- * de tranh nhan doi code render.
+ * Trang này KHÔNG vẽ lại giao diện — nó tự nạp rồi bọc lại <ups-panel-card>
+ * để tránh nhân đôi mã hiển thị.
  */
 
-const UPS_PANEL_VERSION = '3.1.0';
+const UPS_PANEL_VERSION = '3.2.0';
 const CARD_TAG = 'ups-panel-card';
 
-// Tinh mot lan, co duong lui: neu import.meta.url khong dung duoc thi rot ve
-// duong dan tinh mac dinh do integration dang ky.
+// Tính một lần, có đường lui: nếu import.meta.url không dùng được thì rơi về
+// đường dẫn tĩnh mặc định do integration đăng ký.
 const CARD_URL = (() => {
   try {
     return new URL('./ups-panel-card.js', import.meta.url).href;
@@ -38,7 +38,7 @@ class UpsVertivPanel extends HTMLElement {
     this._applyNarrow();
   }
 
-  // HA truyen them 2 thuoc tinh nay; khong dung nhung phai nhan de khong loi
+  // HA truyền thêm 2 thuộc tính này; không dùng nhưng phải nhận để không lỗi
   set route(_v) { }
   set panel(_v) { }
 
@@ -80,7 +80,7 @@ class UpsVertivPanel extends HTMLElement {
           background: rgba(244,67,54,.12); color: #c62828; font-size: .9rem; line-height: 1.6;
         }
         .miss code {
-          background: rgba(0,0,0,.08); padding: 1px 5px; border-radius: 4px;
+          background: rgba(0,0,0,.08); padding: 1px 5px; border-radius: 4px; word-break: break-all;
         }
       </style>
 
@@ -100,18 +100,18 @@ class UpsVertivPanel extends HTMLElement {
 
     const wrap = this.shadowRoot.getElementById('wrap');
 
-    // TU nap card thay vi trong cho frontend.add_extra_js_url.
-    // add_extra_js_url chi duoc tiem vao luc trang frontend khoi tao, nen ngay
-    // sau khi them integration (hoac khi trinh duyet con cache trang cu) card
-    // se chua ton tai. Panel va card nam cung thu muc tinh, ma panel duoc nap
-    // dang ES module, nen import tuong doi luon giai ra dung URL.
+    // TỰ nạp card thay vì trông chờ frontend.add_extra_js_url.
+    // add_extra_js_url chỉ được tiêm vào lúc trang frontend khởi tạo, nên ngay
+    // sau khi thêm integration (hoặc khi trình duyệt còn cache trang cũ) card
+    // sẽ chưa tồn tại. Panel và card nằm cùng thư mục tĩnh, mà panel được nạp
+    // dạng ES module, nên import tương đối luôn giải ra đúng URL.
     let importErr = null;
     if (!customElements.get(CARD_TAG)) {
       try {
         await import(CARD_URL);
       } catch (e) {
         importErr = e;
-        console.error('[ups-panel] khong import duoc card:', e);
+        console.error('[ups-panel] không import được card:', e);
       }
     }
 
@@ -122,17 +122,16 @@ class UpsVertivPanel extends HTMLElement {
 
     if (!ready) {
       const detail = importErr
-        ? `<br><br>Loi import: <code>${String(importErr.message || importErr)}</code>`
+        ? `<br><br>Lỗi import: <code>${String(importErr.message || importErr)}</code>`
         : '';
       wrap.innerHTML = `
         <div class="miss">
-          Khong nap duoc <code>${CARD_TAG}</code>.${detail}<br><br>
-          Kiem tra file co phuc vu duoc khong bang cach mo thang duong dan nay
-          trong trinh duyet:<br>
+          Không nạp được <code>${CARD_TAG}</code>.${detail}<br><br>
+          Kiểm tra file có phục vụ được không bằng cách mở thẳng đường dẫn này
+          trong trình duyệt:<br>
           <code>${CARD_URL}</code><br><br>
-          Neu bao 404 thi vao <b>Cai dat &rarr; Thiet bi &amp; Dich vu</b>,
-          xoa roi them lai <b>UPS Vertiv GXT Panel</b>, sau do khoi dong lai
-          Home Assistant.
+          Nếu báo 404 thì vào <b>Cài đặt &rarr; Thiết bị &amp; Dịch vụ</b>, xoá rồi
+          thêm lại <b>UPS Vertiv GXT Panel</b>, sau đó khởi động lại Home Assistant.
         </div>`;
       return;
     }
