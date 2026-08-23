@@ -147,3 +147,33 @@ function Invoke-UpsCommandCrc {
   $full = $Command + [char]$c[0] + [char]$c[1]
   Invoke-UpsCommand $full $TimeoutMs
 }
+
+# --- O cam lap trinh duoc (PROGRAMMABLE OUTLETS P1) --------------------------
+# Da kiem chung thuc te tren GXT-3000MTPLUS230:
+#   QSK1  -> (1 dang bat / (0 dang tat
+#   SKON1 -> (ACK  (da xac nhan bat lai thanh cong)
+#   SKOFF1        (cung ho lenh)
+# Firmware tra (ACK khi chap nhan, (NAK khi tu choi va KHONG lam gi.
+function Get-UpsOutlet {
+  param([int]$Number = 1)
+  $r = Invoke-UpsCommand "QSK$Number" 2000
+  switch ($r) {
+    '(1'    { 'ON' }
+    '(0'    { 'OFF' }
+    default { $null }
+  }
+}
+
+function Set-UpsOutlet {
+  param(
+    [Parameter(Mandatory)][ValidateSet('ON','OFF')][string]$State,
+    [int]$Number = 1
+  )
+  $cmd = if ($State -eq 'ON') { "SKON$Number" } else { "SKOFF$Number" }
+  $r = Invoke-UpsCommand $cmd 3000
+  [pscustomobject]@{
+    Command  = $cmd
+    Reply    = $r
+    Accepted = ($r -eq '(ACK')
+  }
+}

@@ -383,3 +383,58 @@ tự-tắt-máy này sinh ra để phòng tránh.
 
 Bố trí đúng như vậy thì P1 trở thành công cụ hữu ích: khi mất điện, các tải không thiết
 yếu tự rụng, dồn toàn bộ pin cho máy tính và NAS.
+
+---
+
+# Còi báo (buzzer) — chưa điều khiển được
+
+Cờ `a` trong `QFLAG` là còi báo. Nó **đã chuyển từ bật sang tắt** trong phiên làm việc
+ngày 2026-08-24, và tới giờ chưa bật lại được.
+
+```
+Ban đầu   : (EpbrahczDovegfjlm    a nằm sau E  -> còi BẬT
+Hiện tại  : (EpbrhczDoavegfjlm    a nằm sau D  -> còi TẮT
+```
+
+## Đã thử, đều thất bại
+
+| Lệnh | Số lần | Kết quả |
+|---|---|---|
+| `PDa` (tắt còi) | 1 | `(NAK` |
+| `PDa` + CRC16 | 1 | `(NAK` |
+| `PEa` (bật còi) | 13 | `(NAK` toàn bộ |
+
+## Ba giả thuyết, chưa phân định được
+
+1. **UPS tự tắt còi** sau một khoảng chạy pin (nhiều UPS có hành vi này).
+2. **Có người bấm nút mặt máy** — nút trên mặt UPS thường có chức năng tắt tiếng.
+3. **Lệnh `PDa` đã ăn** dù trả về `(NAK`.
+
+Giả thuyết 3 không loại trừ được, vì đã bắt được bằng chứng interface đôi khi trả sai:
+`QFLAG` — một lệnh đọc chắc chắn hợp lệ — có lần trả `(NAK`, và có lần trả `ERR:write`
+(1 lỗi trong 12 lần đọc liên tiếp). **Vì vậy KHÔNG được kết luận "lệnh không được hỗ trợ"
+chỉ từ một lần NAK.**
+
+## Manh mối mạnh nhất: có thể UPS chặn lệnh ghi khi đang chạy pin
+
+- `SKON1` → `(ACK)` — thành công, gửi lúc **`QMOD = L`** (có điện lưới)
+- `PEa` → `(NAK)` 10/10 — gửi lúc **`QMOD = B`** (đang chạy pin)
+
+Nên **thử lại lệnh ghi khi UPS đã về `QMOD = L`** trước khi kết luận là không hỗ trợ.
+
+## Bẫy khi tự kiểm tra
+
+PowerShell `-match` **không phân biệt hoa thường**, nên `'(EpbrhczDoavegfjlm' -match '^\(E[a-z]*a'`
+trả về **true** dù chữ `a` nằm ở nhóm TẮT (vì `[a-z]` khớp luôn chữ `D` viết hoa).
+Dùng hàm này thay thế:
+
+```powershell
+function Test-FlagEnabled {
+  param([string]$QFlag, [string]$Letter)
+  if ($QFlag -notlike '(E*') { return $null }
+  $s = $QFlag.TrimStart('(')
+  $di = $s.IndexOf('D')
+  if ($di -lt 1) { return $null }
+  $s.Substring(1, $di - 1).Contains($Letter)   # .Contains PHAN BIET hoa thuong
+}
+```

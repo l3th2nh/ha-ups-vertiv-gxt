@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
   Giam sat UPS Vertiv GXT-3000MTPLUS230 qua USB-HID, tu tat may khi sap het pin,
-  day du lieu len Home Assistant qua MQTT (auto-discovery), va nhan lenh
-  tat/khoi dong lai may tu xa.
+  day du lieu len Home Assistant qua MQTT (auto-discovery), nhan lenh tat/khoi
+  dong lai may tu xa, va bat/tat o cam lap trinh duoc P1.
 .PARAMETER Once
   Doc mot lan roi thoat (de kiem tra nhanh).
 .PARAMETER DryRun
@@ -52,11 +52,18 @@ function Write-Log {
 # ------------------------------------------------------------------- mqtt ----
 $script:Mqtt = $null
 $script:LastPing = Get-Date
+$script:LastOutlet = $null
 $UseMqtt = $Cfg.Mqtt.Enabled -and (-not $NoMqtt)
-$Base    = $Cfg.Mqtt.BaseTopic
-$TState  = "$Base/state"
-$TAvail  = "$Base/availability"
-$TCmd    = "$Base/cmd"
+$Base       = $Cfg.Mqtt.BaseTopic
+$TState     = "$Base/state"
+$TAvail     = "$Base/availability"
+$TCmd       = "$Base/cmd"
+$TOutletSet = "$Base/outlet/set"
+
+function Test-OutletControlEnabled {
+  $rc = $Cfg.RemoteControl
+  return ($rc -and $rc.Enabled -and $rc.AllowOutletControl)
+}
 
 function Get-SensorEntities {
   @(
@@ -115,11 +122,17 @@ function Connect-Mqtt {
   $script:LastPing = Get-Date
   $m.Publish($TAvail, 'online', $true) | Out-Null
   Publish-Discovery
+
   if ($Cfg.RemoteControl -and $Cfg.RemoteControl.Enabled) {
     $m.Subscribe($TCmd, 0) | Out-Null
     # Xoa lenh retained con sot lai (neu co) de tranh chay lap khi ket noi lai.
     $m.Publish($TCmd, '', $true) | Out-Null
     Write-Log "Da subscribe topic dieu khien: $TCmd"
+  }
+  if (Test-OutletControlEnabled) {
+    $m.Subscribe($TOutletSet, 0) | Out-Null
+    $m.Publish($TOutletSet, '', $true) | Out-Null
+    Write-Log "Da subscribe topic o cam P1: $TOutletSet"
   }
   Write-Log "MQTT da ket noi toi $($Cfg.Mqtt.Host):$($Cfg.Mqtt.Port)"
   return $true
@@ -171,11 +184,35 @@ function Publish-Discovery {
     $n++
   }
 
+  # Cong tac o cam lap trinh duoc P1 (QSK1 / SKON1 / SKOFF1)
+  if (Test-OutletControlEnabled) {
+    $payload = [ordered]@{
+      name         = 'Programmable Outlet P1'
+      uniq_id      = "$($Cfg.Ups.Id)_outlet_p1"
+      obj_id       = 'ups_outlet_p1'
+      stat_t       = $TState
+      val_tpl      = '{{ value_json.outlet_p1 }}'
+      cmd_t        = $TOutletSet
+      pl_on        = 'ON'
+      pl_off       = 'OFF'
+      stat_on      = 'ON'
+      stat_off     = 'OFF'
+      avty_t       = $TAvail
+      pl_avail     = 'online'
+      pl_not_avail = 'offline'
+      ic           = 'mdi:power-socket-de'
+      dev          = $dev
+    }
+    $topic = "$($Cfg.Mqtt.DiscoveryPrefix)/switch/$($Cfg.Ups.Id)/outlet_p1/config"
+    $script:Mqtt.Publish($topic, ($payload | ConvertTo-Json -Depth 6 -Compress), $true) | Out-Null
+    $n++
+  }
+
   Write-Log "Da gui HA auto-discovery cho $n entity"
 }
 
 function Publish-State {
-  param($S)
+  param($S, [string]$OutletP1)
   if (-not $script:Mqtt) { return }
   # 3000VA x PF 0.80 = 2400W cong suat thuc toi da
   $watts = [math]::Round(2400.0 * $S.LoadPercent / 100.0, 0)
@@ -197,6 +234,7 @@ function Publish-State {
     output_current  = $S.OutputCurrent
     temperature     = $S.TemperatureC
     status_bits     = $S.StatusBits
+    outlet_p1       = $(if ($OutletP1) { $OutletP1 } else { 'unknown' })
   }
   if (-not $script:Mqtt.Publish($TState, ($doc | ConvertTo-Json -Compress), $true)) {
     Write-Log "MQTT publish loi: $($script:Mqtt.LastError) - se ket noi lai" 'WARN'
@@ -271,7 +309,7 @@ function Stop-PendingShutdown {
 
 # --------------------------------------------------------- remote control ----
 function Invoke-RemoteCommand {
-  param([string]$Topic, [string]$Payload)
+  param([string]$Payload)
 
   $cmd = "$Payload".Trim().ToLower()
   if ([string]::IsNullOrWhiteSpace($cmd)) { return }
@@ -309,6 +347,38 @@ function Invoke-RemoteCommand {
   }
 }
 
+function Invoke-OutletCommand {
+  param([string]$Payload)
+
+  $want = "$Payload".Trim().ToUpper()
+  if ([string]::IsNullOrWhiteSpace($want)) { return }
+  if ($script:Mqtt) { $script:Mqtt.Publish($TOutletSet, '', $true) | Out-Null }
+
+  if (-not (Test-OutletControlEnabled)) {
+    Write-Log 'AllowOutletControl dang tat -> bo qua lenh o cam.' 'WARN'
+    return
+  }
+  if ($want -ne 'ON' -and $want -ne 'OFF') {
+    Write-Log "Lenh o cam khong hieu: '$want'" 'WARN'
+    return
+  }
+
+  Write-Log "Nhan lenh o cam P1: $want" 'ALERT'
+  if ($DryRun) { Write-Log '[DryRun] Bo qua lenh o cam.' 'WARN'; return }
+
+  $r = Set-UpsOutlet -State $want -Number 1
+  if ($r.Accepted) {
+    Write-Log "O cam P1 -> $want  ($($r.Command) tra ve $($r.Reply))" 'ALERT'
+  } else {
+    Write-Log "UPS TU CHOI lenh o cam: $($r.Command) tra ve $($r.Reply)" 'WARN'
+  }
+
+  # Doc lai trang thai that va day len HA ngay de cong tac khong bi lech
+  Start-Sleep -Milliseconds 800
+  $script:LastOutlet = Get-UpsOutlet 1
+  if ($script:Mqtt -and $script:LastState) { Publish-State $script:LastState $script:LastOutlet }
+}
+
 # Thay cho Start-Sleep: vua cho, vua lang nghe lenh MQTT, vua giu keepalive.
 function Wait-WithCommands {
   param([int]$Seconds)
@@ -319,7 +389,11 @@ function Wait-WithCommands {
       if ($remainMs -le 0) { break }
       $slice = [Math]::Min(1000, [Math]::Max(100, $remainMs))
       if ($script:Mqtt.TryReadMessage($slice)) {
-        Invoke-RemoteCommand $script:Mqtt.LastTopic $script:Mqtt.LastPayload
+        $topic = $script:Mqtt.LastTopic
+        $body = $script:Mqtt.LastPayload
+        if ($topic -eq $TOutletSet) { Invoke-OutletCommand $body }
+        elseif ($topic -eq $TCmd) { Invoke-RemoteCommand $body }
+        else { Write-Log "Bo qua message tu topic la: $topic" 'WARN' }
       } elseif (-not $script:Mqtt.IsConnected) {
         Write-Log "Mat ket noi MQTT: $($script:Mqtt.LastError)" 'WARN'
         $script:Mqtt = $null
@@ -342,12 +416,14 @@ $sdc = $Cfg.Shutdown
 Write-Log ('Nguong tat may: pin<={0}%  battV<={1}V  runtime<={2}phut  onbattery>={3}s  confirm={4} lan  grace={5}s  enabled={6}' -f
   $sdc.BatteryPercentBelow, $sdc.BatteryVoltageBelow, $sdc.RuntimeMinutesBelow,
   $sdc.OnBatterySecondsAbove, $sdc.ConfirmReadings, $sdc.GraceSeconds, $sdc.Enabled)
+Write-Log ("Dieu khien o cam P1: {0}" -f $(if (Test-OutletControlEnabled) { 'BAT' } else { 'TAT' }))
 
 if ($UseMqtt) { Connect-Mqtt | Out-Null }
 
 $script:OnBatterySince = $null
 $script:ConfirmCount = 0
 $script:ShutdownIssued = $false
+$script:LastState = $null
 $commsFail = 0
 $lastMode = ''
 
@@ -363,6 +439,7 @@ try {
       Wait-WithCommands $Cfg.Poll.NormalSeconds
       continue
     }
+    $script:LastState = $s
 
     if ($commsFail -gt 0) {
       Write-Log "Da doc lai duoc UPS sau $commsFail lan loi"
@@ -374,6 +451,15 @@ try {
       $prev = if ($lastMode) { $lastMode } else { '?' }
       Write-Log ('Chuyen che do: {0} -> {1} ({2})' -f $prev, $s.Mode, $s.ModeText) 'ALERT'
       $lastMode = $s.Mode
+    }
+
+    # Trang thai o cam P1 - UPS tu ngat no sau mot khoang chay pin
+    $outlet = Get-UpsOutlet 1
+    if ($outlet -and $outlet -ne $script:LastOutlet) {
+      if ($script:LastOutlet) {
+        Write-Log "O cam lap trinh P1 doi trang thai: $($script:LastOutlet) -> $outlet" 'ALERT'
+      }
+      $script:LastOutlet = $outlet
     }
 
     if ($s.OnBattery) {
@@ -396,7 +482,7 @@ try {
     }
 
     if ($UseMqtt -and -not $script:Mqtt) { Connect-Mqtt | Out-Null }
-    Publish-State $s
+    Publish-State $s $script:LastOutlet
 
     if ($Cfg.Shutdown.Enabled -and -not $script:ShutdownIssued) {
       $reason = Test-ShutdownCondition $s
@@ -413,6 +499,7 @@ try {
 
     if ($Once) {
       $s | Format-List | Out-String | Write-Host
+      "O cam P1 : $script:LastOutlet" | Write-Host
       break
     }
 

@@ -12,7 +12,7 @@
  *   show_controls: true
  */
 
-const UPS_CARD_VERSION = '1.0.0';
+const UPS_CARD_VERSION = '1.1.0';
 
 const SENSOR_KEYS = [
   'battery_percent', 'runtime_minutes', 'load_percent', 'load_watts',
@@ -94,6 +94,20 @@ class UpsPanelCard extends HTMLElement {
     this._hass.callService('button', 'press', { entity_id: id });
   }
 
+  _toggleOutlet() {
+    const id = this._id('switch', 'outlet_p1');
+    const e = this._hass && this._hass.states[id];
+    if (!e) {
+      alert(`Khong tim thay entity ${id}.\nKiem tra RemoteControl.AllowOutletControl trong ups-config.psd1.`);
+      return;
+    }
+    const turningOff = e.state === 'on';
+    if (turningOff && !window.confirm(
+      'TAT o cam lap trinh P1?\n\nMoi thiet bi dang cam o day se MAT DIEN ngay lap tuc.\n' +
+      'Khong dung o cam nay cho may tinh hay NAS.')) return;
+    this._hass.callService('switch', turningOff ? 'turn_off' : 'turn_on', { entity_id: id });
+  }
+
   // -------------------------------------------------------------- render ---
   _build() {
     const c = this._config;
@@ -146,6 +160,21 @@ class UpsPanelCard extends HTMLElement {
         .ctl button.can  { background:var(--secondary-background-color); color:var(--primary-text-color); }
         .ctl button:hover { filter:brightness(.94); }
 
+        .outlet { display:flex; align-items:center; justify-content:space-between; gap:12px;
+                  margin-top:16px; padding:12px; border-radius:10px;
+                  background:var(--secondary-background-color); }
+        .outlet .oi { min-width:0; }
+        .outlet .on { font-size:.9rem; font-weight:600; color:var(--primary-text-color); }
+        .outlet .os { font-size:.72rem; color:var(--secondary-text-color); margin-top:2px; }
+        .sw { position:relative; width:52px; height:30px; border-radius:999px; border:none;
+              cursor:pointer; flex:0 0 auto; background:var(--divider-color); transition:background .2s; }
+        .sw::after { content:''; position:absolute; top:3px; left:3px; width:24px; height:24px;
+                     border-radius:50%; background:#fff; transition:transform .2s;
+                     box-shadow:0 1px 3px rgba(0,0,0,.3); }
+        .sw.on { background:#4caf50; }
+        .sw.on::after { transform:translateX(22px); }
+        .sw:disabled { opacity:.4; cursor:not-allowed; }
+
         .foot { margin-top:12px; font-size:.7rem; color:var(--secondary-text-color); text-align:right; }
       </style>
 
@@ -197,6 +226,14 @@ class UpsPanelCard extends HTMLElement {
           <div class="cell"><div class="k">Tan so vao</div><div class="v" id="m-inf">--</div></div>
         </div>
 
+        <div class="outlet" id="outlet-row">
+          <div class="oi">
+            <div class="on">O cam lap trinh P1</div>
+            <div class="os" id="outlet-sub">--</div>
+          </div>
+          <button class="sw" id="outlet-sw" title="Bat/tat o cam P1"></button>
+        </div>
+
         <div class="ctl" id="ctl" style="display:${c.show_controls ? 'flex' : 'none'}">
           <button class="off" id="btn-off">Tat may</button>
           <button class="rst" id="btn-rst">Khoi dong lai</button>
@@ -213,6 +250,7 @@ class UpsPanelCard extends HTMLElement {
     $('btn-rst').addEventListener('click', () =>
       this._press('pc_restart', 'Khoi dong lai may tinh nay?\nCac chuong trinh dang mo se bi dong (/f).'));
     $('btn-can').addEventListener('click', () => this._press('cancel_shutdown', null));
+    $('outlet-sw').addEventListener('click', () => this._toggleOutlet());
 
     this._built = true;
   }
@@ -284,6 +322,23 @@ class UpsPanelCard extends HTMLElement {
     $('m-bv').textContent   = this._fmt('battery_voltage', 'V', 1);
     $('m-temp').textContent = this._fmt('temperature', '°C', 1);
     $('m-inf').textContent  = this._fmt('input_freq', 'Hz', 1);
+
+    // --- o cam lap trinh P1 ---
+    const outEnt = this._hass.states[this._id('switch', 'outlet_p1')];
+    const outRow = $('outlet-row');
+    const outSw  = $('outlet-sw');
+    if (!outEnt) {
+      outRow.style.display = 'none';
+    } else {
+      outRow.style.display = 'flex';
+      const isOn = outEnt.state === 'on';
+      const dead = outEnt.state === 'unavailable' || outEnt.state === 'unknown';
+      outSw.className = 'sw' + (isOn ? ' on' : '');
+      outSw.disabled = dead;
+      $('outlet-sub').textContent = dead
+        ? 'Khong ro trang thai'
+        : (isOn ? 'Dang cap dien' : 'Dang tat - thiet bi cam o day khong co dien');
+    }
 
     // --- chan trang ---
     const src = this._hass.states[this._id('sensor', 'mode_text')];

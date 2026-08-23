@@ -55,6 +55,7 @@
     Enabled       = $true
     AllowShutdown = $true
     AllowRestart  = $true
+    AllowOutletControl = $true   # bat/tat o cam P1 tu HA
     GraceSeconds  = 30   # dem nguoc khi bam nut tu HA
   }
 
