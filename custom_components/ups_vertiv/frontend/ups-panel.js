@@ -6,7 +6,7 @@
  * (nap qua frontend.add_extra_js_url) de tranh nhan doi code.
  */
 
-const UPS_PANEL_VERSION = '3.0.0';
+const UPS_PANEL_VERSION = '3.0.1';
 const CARD_TAG = 'ups-panel-card';
 
 class UpsVertivPanel extends HTMLElement {

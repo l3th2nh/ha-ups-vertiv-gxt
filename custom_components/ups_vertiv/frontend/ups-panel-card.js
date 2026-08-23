@@ -15,7 +15,7 @@
  *   name: UPS Vertiv GXT-3000
  */
 
-const UPS_CARD_VERSION = '3.0.0';
+const UPS_CARD_VERSION = '3.0.1';
 
 // Mau ma theo che do QMOD do agent gui len (mode_text bat dau bang tu khoa nay)
 const MODE_STYLE = [
@@ -138,6 +138,8 @@ class UpsPanelCard extends HTMLElement {
         .banner.show { display:block; }
         .banner.off  { background:rgba(120,120,120,.14); color:var(--secondary-text-color); }
         .banner.bad  { background:rgba(244,67,54,.14);  color:#c62828; }
+        .banner code { background:rgba(0,0,0,.10); padding:1px 5px; border-radius:4px;
+                       font-size:.9em; word-break:break-all; }
 
         .flow { display:grid; grid-template-columns:1fr auto 1fr auto 1fr; align-items:center;
                 gap:6px; margin-bottom:16px; }
@@ -280,10 +282,17 @@ class UpsPanelCard extends HTMLElement {
     if (!this._hass || !this._built) return;
     const $ = (id) => this.shadowRoot.getElementById(id);
 
-    const modeText = this._state('sensor', 'mode_text');
+    const modeEnt = this._hass.states[this._id('sensor', 'mode_text')];
+    const modeText = modeEnt ? modeEnt.state : null;
     const onBattery = this._state('binary_sensor', 'on_battery') === 'on';
     const hasFault = this._state('binary_sensor', 'has_warning') === 'on';
-    const offline = !modeText || modeText === 'unavailable' || modeText === 'unknown';
+
+    // Phan biet 2 tinh huong hoan toan khac nhau:
+    //   missing = entity CHUA TON TAI  -> HA chua doc duoc MQTT discovery
+    //   unavail = entity CO nhung mat du lieu -> agent tren may Windows khong chay
+    const missing = !modeEnt;
+    const unavail = !missing && (modeText === 'unavailable' || modeText === 'unknown');
+    const offline = missing || unavail;
 
     // --- badge trang thai ---
     let style = { cls: 'dead', label: 'Mat ket noi' };
@@ -297,10 +306,23 @@ class UpsPanelCard extends HTMLElement {
 
     // --- banner canh bao ---
     const banner = $('banner');
-    if (offline) {
+    if (missing) {
+      // Dem xem co entity nao mang tien to nay khong -> giup chan doan nhanh
+      const pfx = `.${this._config.prefix}_`;
+      const found = Object.keys(this._hass.states).filter((id) => id.includes(pfx)).length;
+      banner.className = 'banner bad show';
+      banner.innerHTML =
+        `Khong tim thay <code>${this._id('sensor', 'mode_text')}</code> trong Home Assistant ` +
+        `(tim duoc ${found} entity co tien to <code>${this._config.prefix}_</code>).<br><br>` +
+        `<b>Nguyen nhan thuong gap:</b> HA chua bat tich hop MQTT. Vao ` +
+        `<b>Cai dat &rarr; Thiet bi &amp; Dich vu &rarr; Them tich hop &rarr; MQTT</b>. ` +
+        `Du lieu da nam san tren broker roi, HA chi can duoc bat de doc.`;
+    } else if (unavail) {
       banner.className = 'banner off show';
-      banner.textContent =
-        'Khong nhan duoc du lieu. May tinh cam UPS dang tat, hoac Ups-Monitor khong chay, hoac mat MQTT.';
+      banner.innerHTML =
+        `Entity da co trong HA nhung dang <b>unavailable</b>. ` +
+        `Nghia la agent <code>Ups-Monitor.ps1</code> tren may Windows khong chay, ` +
+        `hoac may do dang tat, hoac mat ket noi toi broker MQTT.`;
     } else if (hasFault) {
       banner.className = 'banner bad show';
       banner.textContent = 'UPS dang bao loi (QWS khac 0). Kiem tra man hinh UPS.';
