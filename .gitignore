@@ -10,3 +10,6 @@ Thumbs.db
 desktop.ini
 .vscode/
 *.swp
+
+# Text trich xuat tu manual cua hang - khong publish
+docs/manual.txt

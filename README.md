@@ -438,3 +438,93 @@ function Test-FlagEnabled {
   $s.Substring(1, $di - 1).Contains($Letter)   # .Contains PHAN BIET hoa thuong
 }
 ```
+
+---
+
+# Kết luận từ User Manual chính hãng
+
+Nguồn: *Liebert GXT MT+ User Manual, 1000–3000 VA* (bản của Vertiv).
+
+## Còi báo — CHỈ tắt/bật được bằng nút trên mặt máy
+
+Mục **3-1 Button operation** ghi rõ:
+
+> **Mute the alarm:** When the UPS is on battery mode, press and hold this button for at
+> least **5 seconds** to **disable or enable** the alarm system. But it's not applied to the
+> situations when warnings or errors occur.
+
+Đây là **toggle vật lý trên nút `ON/MUTE`**, và **chỉ tác dụng khi UPS đang ở battery mode**.
+Khi còi đã tắt, LCD hiện biểu tượng mute (mục 3-2, "Mute operation").
+
+### Cách bật lại còi
+
+1. Rút điện lưới để UPS chuyển sang **battery mode** (bắt buộc — giữ nút lúc có điện lưới không có tác dụng)
+2. Giữ nút **`ON/MUTE`** ít nhất **5 giây**
+3. Kiểm tra biểu tượng mute trên LCD đã biến mất
+4. Cắm điện lưới lại
+
+### Không có lệnh serial nào cho còi báo
+
+Manual **không liệt kê bất kỳ lệnh USB/RS-232 nào** điều khiển còi. Thực nghiệm cũng khớp:
+
+| Lệnh | Số lần | Kết quả |
+|---|---|---|
+| `PEa` / `PDa` | 21 | `(NAK` toàn bộ |
+| `SKON1` (đối chứng, cùng phiên) | 3 | `(ACK` toàn bộ |
+
+Đường ghi hoàn toàn khỏe mạnh, chỉ riêng họ lệnh `PE`/`PD` không tồn tại trên firmware này.
+
+> **Vì vậy KHÔNG thể làm nút tắt tiếng còi trên Home Assistant.** Thay thế tốt hơn: dùng
+> automation bắt `binary_sensor.ups_on_battery` rồi đẩy thông báo qua `notify.mobile_app_*`.
+
+## Hai cổng "IN" / "OUT" — KHÔNG phải RS485
+
+Mục **2-1 Rear View**, hạng mục 5: **"Network/Fax/Modem surge protection"**.
+Mục **2-2 Step 4** mô tả cách dùng:
+
+> Connect a single modem/phone/fax line into surge-protected **"IN"** outlet on the back panel
+> of the UPS unit. Connect from **"OUT"** outlet to the equipment with another cable.
+
+Đây chỉ là **đường chống sét đi xuyên qua**: tín hiệu vào `IN`, ra `OUT`, UPS hấp thụ xung sét
+trên đường dây đó. **Không mang dữ liệu gì của UPS, không phải cổng giao tiếp.**
+
+Danh sách cổng giao tiếp thật của máy (mục 2-1):
+
+| # | Cổng | Ghi chú |
+|---|---|---|
+| 7 | **USB** | Đang dùng — cho toàn bộ dữ liệu |
+| 8 | **RS-232** | *"USB port and RS-232 port can't work at the same time"* |
+| 9 | **SNMP intelligent slot** | Khe lắp card SNMP / AS400 → UPS có IP riêng |
+| 6 | EPO connector | Chập pin 1-2 = hoạt động bình thường; cắt dây = kích hoạt EPO |
+
+## Ổ cắm lập trình — đây là thứ đã gây mất điện
+
+Menu cài đặt trên LCD (giữ **`SELECT`** 5 giây khi UPS ở **standby** hoặc **bypass mode**):
+
+| Mã | Mục | Giá trị |
+|---|---|---|
+| 01 | Output voltage setting | |
+| 02 | Frequency Converter enable/disable | |
+| 03 | Output frequency setting | |
+| 05 | Bypass enable/disable when UPS is off | ENA / DIS |
+| **06** | **Programmable outlets enable/disable** | **ENA / DIS** |
+| **07** | **Programmable outlets setting** | **0–999 phút** |
+| 00 | Exit setting | ESC |
+
+**Mục 07 chính là bộ đếm đã ngắt ổ P1**: số phút chạy pin trước khi nhóm ổ lập trình bị cắt.
+Manual mô tả đúng ý đồ thiết kế (mục 2-2 Step 2):
+
+> During power failure, you may extend the backup time to critical devices by setting shorter
+> backup time for non-critical devices.
+
+Muốn ổ P1 không bao giờ tự ngắt: đặt **07** lên giá trị lớn, hoặc đặt **06 = DIS**.
+
+## Bảng âm báo (mục 3-3)
+
+| Tình huống | Tiếng còi |
+|---|---|
+| Battery Mode | 4 giây một tiếng |
+| Low Battery | mỗi giây một tiếng |
+| Overload | 2 tiếng mỗi giây |
+| Fault | kêu liên tục |
+| Bypass Mode | 10 giây một tiếng |
