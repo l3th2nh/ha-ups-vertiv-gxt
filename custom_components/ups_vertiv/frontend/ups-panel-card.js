@@ -15,7 +15,7 @@
  *   name: UPS Vertiv GXT-3000
  */
 
-const UPS_CARD_VERSION = '3.0.1';
+const UPS_CARD_VERSION = '3.0.2';
 
 // Mau ma theo che do QMOD do agent gui len (mode_text bat dau bang tu khoa nay)
 const MODE_STYLE = [

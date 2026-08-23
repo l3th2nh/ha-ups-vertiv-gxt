@@ -2,12 +2,22 @@
  * ups-panel.js
  * Panel toan trang cho Home Assistant, dang ky tai /ups boi integration ups_vertiv.
  *
- * Panel nay KHONG ve lai giao dien - no boc lai <ups-panel-card> da co
- * (nap qua frontend.add_extra_js_url) de tranh nhan doi code.
+ * Panel nay KHONG ve lai giao dien - no tu import roi boc lai <ups-panel-card>
+ * de tranh nhan doi code render.
  */
 
-const UPS_PANEL_VERSION = '3.0.1';
+const UPS_PANEL_VERSION = '3.0.2';
 const CARD_TAG = 'ups-panel-card';
+
+// Tinh mot lan, co duong lui: neu import.meta.url khong dung duoc thi rot ve
+// duong dan tinh mac dinh do integration dang ky.
+const CARD_URL = (() => {
+  try {
+    return new URL('./ups-panel-card.js', import.meta.url).href;
+  } catch (e) {
+    return '/ups_vertiv-frontend/ups-panel-card.js';
+  }
+})();
 
 class UpsVertivPanel extends HTMLElement {
   constructor() {
@@ -90,20 +100,39 @@ class UpsVertivPanel extends HTMLElement {
 
     const wrap = this.shadowRoot.getElementById('wrap');
 
-    // Card duoc nap qua add_extra_js_url nen thuong da san sang.
-    // Van cho toi 5 giay phong truong hop thu tu nap khac nhau.
+    // TU nap card thay vi trong cho frontend.add_extra_js_url.
+    // add_extra_js_url chi duoc tiem vao luc trang frontend khoi tao, nen ngay
+    // sau khi them integration (hoac khi trinh duyet con cache trang cu) card
+    // se chua ton tai. Panel va card nam cung thu muc tinh, ma panel duoc nap
+    // dang ES module, nen import tuong doi luon giai ra dung URL.
+    let importErr = null;
+    if (!customElements.get(CARD_TAG)) {
+      try {
+        await import(CARD_URL);
+      } catch (e) {
+        importErr = e;
+        console.error('[ups-panel] khong import duoc card:', e);
+      }
+    }
+
     const ready = await Promise.race([
       customElements.whenDefined(CARD_TAG).then(() => true),
       new Promise((r) => setTimeout(() => r(false), 5000)),
     ]);
 
     if (!ready) {
+      const detail = importErr
+        ? `<br><br>Loi import: <code>${String(importErr.message || importErr)}</code>`
+        : '';
       wrap.innerHTML = `
         <div class="miss">
-          Khong nap duoc <code>${CARD_TAG}</code>.<br><br>
-          Thu <b>Ctrl+F5</b> de xoa cache trinh duyet. Neu van khong duoc,
-          vao <b>Cai dat &rarr; Thiet bi &amp; Dich vu</b>, xoa roi them lai
-          <b>UPS Vertiv GXT Panel</b>.
+          Khong nap duoc <code>${CARD_TAG}</code>.${detail}<br><br>
+          Kiem tra file co phuc vu duoc khong bang cach mo thang duong dan nay
+          trong trinh duyet:<br>
+          <code>${CARD_URL}</code><br><br>
+          Neu bao 404 thi vao <b>Cai dat &rarr; Thiet bi &amp; Dich vu</b>,
+          xoa roi them lai <b>UPS Vertiv GXT Panel</b>, sau do khoi dong lai
+          Home Assistant.
         </div>`;
       return;
     }
