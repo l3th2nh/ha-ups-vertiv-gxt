@@ -1,8 +1,10 @@
 <#
 .SYNOPSIS
-  Giam sat UPS Vertiv GXT-3000MTPLUS230 qua USB-HID, tu tat may khi sap het pin,
-  day du lieu len Home Assistant qua MQTT (auto-discovery), nhan lenh tat/khoi
-  dong lai may tu xa, va bat/tat o cam lap trinh duoc P1.
+  Giam sat UPS Vertiv GXT-3000MTPLUS230 qua USB-HID:
+    - Doc toan bo thong so, day len Home Assistant qua MQTT auto-discovery
+    - Ghi NHAT KY su kien mat dien / co dien lai (luu ra file, day len HA)
+    - Tu tat may an toan khi sap het pin
+  Mac dinh KHONG bat dieu khien tu xa (xem RemoteControl trong config).
 .PARAMETER Once
   Doc mot lan roi thoat (de kiem tra nhanh).
 .PARAMETER DryRun
@@ -30,7 +32,8 @@ $Cfg = Import-PowerShellDataFile -Path $ConfigPath
 # ---------------------------------------------------------------- logging ----
 $LogDir = $Cfg.Log.Directory
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
-$LogFile = Join-Path $LogDir 'ups-monitor.log'
+$LogFile    = Join-Path $LogDir 'ups-monitor.log'
+$EventsFile = Join-Path $LogDir 'power-events.json'
 
 function Write-Log {
   param([string]$Message, [ValidateSet('INFO','WARN','ERROR','ALERT')][string]$Level = 'INFO')
@@ -49,24 +52,110 @@ function Write-Log {
   Write-Host $line -ForegroundColor $color
 }
 
+# ------------------------------------------------------- nhat ky su kien -----
+# Moi lan mat dien la mot ban ghi. Luu ra file JSON de song sot qua reboot.
+$MaxEvents = if ($Cfg.Events -and $Cfg.Events.KeepCount) { [int]$Cfg.Events.KeepCount } else { 50 }
+$script:Events  = @()
+$script:Current = $null
+
+function Load-Events {
+  if (-not (Test-Path $EventsFile)) { return }
+  try {
+    $raw = Get-Content $EventsFile -Raw -Encoding UTF8
+    if ([string]::IsNullOrWhiteSpace($raw)) { return }
+    # PS 5.1: ConvertFrom-Json tra CA MANG duoi dang MOT object, nen @(...) se
+    # boc thanh 1 phan tu chua mang. Phai dung foreach de duyet cho dung.
+    $loaded = @()
+    foreach ($e in ($raw | ConvertFrom-Json)) { $loaded += , $e }
+    $script:Events = $loaded
+    Write-Log "Da nap $($script:Events.Count) su kien tu $EventsFile"
+  } catch {
+    Write-Log "Khong doc duoc $EventsFile : $($_.Exception.Message)" 'WARN'
+  }
+}
+
+function Save-Events {
+  try {
+    $keep = @($script:Events | Select-Object -Last $MaxEvents)
+    # PS 5.1: neu pipe vao ConvertTo-Json thi mang 1 phan tu bi mat dau [ ].
+    # -InputObject ([object[]]...) giu dung dinh dang mang trong moi truong hop.
+    $json = ConvertTo-Json -InputObject ([object[]]$keep) -Depth 5 -Compress
+    Set-Content -Path $EventsFile -Value $json -Encoding UTF8
+  } catch {
+    Write-Log "Khong ghi duoc $EventsFile : $($_.Exception.Message)" 'WARN'
+  }
+}
+
+function New-OutageEvent {
+  param($S)
+  [ordered]@{
+    start          = (Get-Date).ToString('s')
+    end            = $null
+    duration_s     = 0
+    battery_start  = $S.BatteryPercent
+    battery_end    = $S.BatteryPercent
+    battery_min    = $S.BatteryPercent
+    voltage_start  = $S.BatteryVoltage
+    voltage_min    = $S.BatteryVoltage
+    load_max       = $S.LoadPercent
+    outlet_shed    = $false
+    shutdown_fired = $false
+    ongoing        = $true
+  }
+}
+
+function Update-OutageEvent {
+  param($S)
+  if (-not $script:Current) { return }
+  $e = $script:Current
+  if ($S.BatteryPercent -lt $e.battery_min) { $e.battery_min = $S.BatteryPercent }
+  if ($S.BatteryVoltage -lt $e.voltage_min) { $e.voltage_min = $S.BatteryVoltage }
+  if ($S.LoadPercent -gt $e.load_max) { $e.load_max = $S.LoadPercent }
+  $e.battery_end = $S.BatteryPercent
+  $e.duration_s = [int]((Get-Date) - [datetime]$e.start).TotalSeconds
+}
+
+function Close-OutageEvent {
+  if (-not $script:Current) { return }
+  $e = $script:Current
+  $e.end = (Get-Date).ToString('s')
+  $e.duration_s = [int]([datetime]$e.end - [datetime]$e.start).TotalSeconds
+  $e.ongoing = $false
+  $script:Events += ,$e
+  $script:Current = $null
+  Save-Events
+  Write-Log ("Da ghi su kien mat dien: {0} giay, pin {1}% -> {2}%, thap nhat {3}V{4}" -f
+    $e.duration_s, $e.battery_start, $e.battery_end, $e.voltage_min,
+    $(if ($e.outlet_shed) { ', o P1 da bi ngat' } else { '' })) 'ALERT'
+}
+
+function Format-Duration {
+  param([int]$Seconds)
+  if ($Seconds -lt 60) { return "$Seconds giay" }
+  $m = [math]::Floor($Seconds / 60); $s = $Seconds % 60
+  if ($m -lt 60) { return "$m phut $s giay" }
+  $h = [math]::Floor($m / 60); $m = $m % 60
+  "$h gio $m phut"
+}
+
 # ------------------------------------------------------------------- mqtt ----
 $script:Mqtt = $null
 $script:LastPing = Get-Date
 $script:LastOutlet = $null
 $UseMqtt = $Cfg.Mqtt.Enabled -and (-not $NoMqtt)
-$Base       = $Cfg.Mqtt.BaseTopic
-$TState     = "$Base/state"
-$TAvail     = "$Base/availability"
-$TCmd       = "$Base/cmd"
-$TOutletSet = "$Base/outlet/set"
+$Base    = $Cfg.Mqtt.BaseTopic
+$TState  = "$Base/state"
+$TEvents = "$Base/events"
+$TAvail  = "$Base/availability"
+$TCmd    = "$Base/cmd"
 
-function Test-OutletControlEnabled {
+function Test-RemoteEnabled {
   $rc = $Cfg.RemoteControl
-  return ($rc -and $rc.Enabled -and $rc.AllowOutletControl)
+  return ($rc -and $rc.Enabled)
 }
 
 function Get-SensorEntities {
-  @(
+  $e = @(
     @{ Kind = 'sensor'; Key = 'battery_percent'; Name = 'Battery';          Unit = '%';          Dc = 'battery';     Sc = 'measurement'; Icon = $null }
     @{ Kind = 'sensor'; Key = 'runtime_minutes'; Name = 'Runtime';          Unit = 'min';        Dc = 'duration';    Sc = 'measurement'; Icon = $null }
     @{ Kind = 'sensor'; Key = 'load_percent';    Name = 'Load';             Unit = '%';          Dc = $null;         Sc = 'measurement'; Icon = 'mdi:gauge' }
@@ -82,19 +171,10 @@ function Get-SensorEntities {
     @{ Kind = 'binary_sensor'; Key = 'on_battery';  Name = 'On Battery'; Unit = $null; Dc = 'problem'; Sc = $null; Icon = $null }
     @{ Kind = 'binary_sensor'; Key = 'has_warning'; Name = 'Fault';      Unit = $null; Dc = 'problem'; Sc = $null; Icon = $null }
   )
-}
-
-function Get-ButtonEntities {
-  $b = @()
-  if (-not $Cfg.RemoteControl -or -not $Cfg.RemoteControl.Enabled) { return $b }
-  if ($Cfg.RemoteControl.AllowShutdown) {
-    $b += @{ Key = 'pc_shutdown'; Name = 'PC Shutdown'; Payload = 'shutdown'; Icon = 'mdi:power' }
-  }
-  if ($Cfg.RemoteControl.AllowRestart) {
-    $b += @{ Key = 'pc_restart'; Name = 'PC Restart'; Payload = 'restart'; Icon = 'mdi:restart' }
-  }
-  $b += @{ Key = 'cancel_shutdown'; Name = 'Cancel Shutdown'; Payload = 'cancel'; Icon = 'mdi:cancel' }
-  return $b
+  # O cam P1 chi de DOC (khong dieu khien) - van huu ich de biet no da bi shed
+  $e += @{ Kind = 'binary_sensor'; Key = 'outlet_p1'; Name = 'Programmable Outlet P1'
+           Unit = $null; Dc = $null; Sc = $null; Icon = 'mdi:power-socket-de' }
+  return $e
 }
 
 function Get-DeviceBlock {
@@ -122,17 +202,11 @@ function Connect-Mqtt {
   $script:LastPing = Get-Date
   $m.Publish($TAvail, 'online', $true) | Out-Null
   Publish-Discovery
-
-  if ($Cfg.RemoteControl -and $Cfg.RemoteControl.Enabled) {
+  Publish-Events
+  if (Test-RemoteEnabled) {
     $m.Subscribe($TCmd, 0) | Out-Null
-    # Xoa lenh retained con sot lai (neu co) de tranh chay lap khi ket noi lai.
     $m.Publish($TCmd, '', $true) | Out-Null
     Write-Log "Da subscribe topic dieu khien: $TCmd"
-  }
-  if (Test-OutletControlEnabled) {
-    $m.Subscribe($TOutletSet, 0) | Out-Null
-    $m.Publish($TOutletSet, '', $true) | Out-Null
-    Write-Log "Da subscribe topic o cam P1: $TOutletSet"
   }
   Write-Log "MQTT da ket noi toi $($Cfg.Mqtt.Host):$($Cfg.Mqtt.Port)"
   return $true
@@ -166,49 +240,40 @@ function Publish-Discovery {
     $n++
   }
 
-  foreach ($b in Get-ButtonEntities) {
-    $payload = [ordered]@{
-      name         = $b.Name
-      uniq_id      = "$($Cfg.Ups.Id)_$($b.Key)"
-      obj_id       = "ups_$($b.Key)"
-      cmd_t        = $TCmd
-      pl_prs       = $b.Payload
-      avty_t       = $TAvail
-      pl_avail     = 'online'
-      pl_not_avail = 'offline'
-      ic           = $b.Icon
-      dev          = $dev
-    }
-    $topic = "$($Cfg.Mqtt.DiscoveryPrefix)/button/$($Cfg.Ups.Id)/$($b.Key)/config"
-    $script:Mqtt.Publish($topic, ($payload | ConvertTo-Json -Depth 6 -Compress), $true) | Out-Null
-    $n++
+  # Nhat ky su kien: state = thoi diem gan nhat, attributes = ca mang su kien
+  $payload = [ordered]@{
+    name         = 'Power Events'
+    uniq_id      = "$($Cfg.Ups.Id)_power_events"
+    obj_id       = 'ups_power_events'
+    stat_t       = $TEvents
+    val_tpl      = '{{ value_json.last }}'
+    json_attr_t  = $TEvents
+    avty_t       = $TAvail
+    pl_avail     = 'online'
+    pl_not_avail = 'offline'
+    ic           = 'mdi:history'
+    dev          = $dev
   }
-
-  # Cong tac o cam lap trinh duoc P1 (QSK1 / SKON1 / SKOFF1)
-  if (Test-OutletControlEnabled) {
-    $payload = [ordered]@{
-      name         = 'Programmable Outlet P1'
-      uniq_id      = "$($Cfg.Ups.Id)_outlet_p1"
-      obj_id       = 'ups_outlet_p1'
-      stat_t       = $TState
-      val_tpl      = '{{ value_json.outlet_p1 }}'
-      cmd_t        = $TOutletSet
-      pl_on        = 'ON'
-      pl_off       = 'OFF'
-      stat_on      = 'ON'
-      stat_off     = 'OFF'
-      avty_t       = $TAvail
-      pl_avail     = 'online'
-      pl_not_avail = 'offline'
-      ic           = 'mdi:power-socket-de'
-      dev          = $dev
-    }
-    $topic = "$($Cfg.Mqtt.DiscoveryPrefix)/switch/$($Cfg.Ups.Id)/outlet_p1/config"
-    $script:Mqtt.Publish($topic, ($payload | ConvertTo-Json -Depth 6 -Compress), $true) | Out-Null
-    $n++
-  }
+  $script:Mqtt.Publish(
+    "$($Cfg.Mqtt.DiscoveryPrefix)/sensor/$($Cfg.Ups.Id)/power_events/config",
+    ($payload | ConvertTo-Json -Depth 6 -Compress), $true) | Out-Null
+  $n++
 
   Write-Log "Da gui HA auto-discovery cho $n entity"
+}
+
+function Publish-Events {
+  if (-not $script:Mqtt) { return }
+  $list = @($script:Events | Select-Object -Last $MaxEvents)
+  if ($script:Current) { $list += ,$script:Current }   # ca su kien dang dien ra
+  $last = if ($list.Count) { $list[-1].start } else { 'never' }
+  $doc = [ordered]@{
+    last    = $last
+    count   = $list.Count
+    ongoing = [bool]$script:Current
+    events  = $list
+  }
+  $script:Mqtt.Publish($TEvents, ($doc | ConvertTo-Json -Depth 5 -Compress), $true) | Out-Null
 }
 
 function Publish-State {
@@ -234,7 +299,7 @@ function Publish-State {
     output_current  = $S.OutputCurrent
     temperature     = $S.TemperatureC
     status_bits     = $S.StatusBits
-    outlet_p1       = $(if ($OutletP1) { $OutletP1 } else { 'unknown' })
+    outlet_p1       = $(if ($OutletP1) { $OutletP1 } else { 'OFF' })
   }
   if (-not $script:Mqtt.Publish($TState, ($doc | ConvertTo-Json -Compress), $true)) {
     Write-Log "MQTT publish loi: $($script:Mqtt.LastError) - se ket noi lai" 'WARN'
@@ -284,7 +349,7 @@ function Invoke-UpsShutdown {
   $grace = [int]$Cfg.Shutdown.GraceSeconds
   $msg = "UPS sap het pin: $Reason. May se tat sau $grace giay."
   Write-Log "TAT MAY: $Reason" 'ALERT'
-  if ($script:Mqtt) { $script:Mqtt.Publish("$Base/shutdown_reason", $Reason, $true) | Out-Null }
+  if ($script:Current) { $script:Current.shutdown_fired = $true; Publish-Events }
   if ($DryRun) {
     Write-Log '[DryRun] Bo qua lenh tat may that.' 'WARN'
     return $true
@@ -304,83 +369,41 @@ function Stop-PendingShutdown {
   if (-not $DryRun) {
     try { & shutdown.exe '/a' 2>&1 | Out-Null } catch { }
   }
-  if ($script:Mqtt) { $script:Mqtt.Publish("$Base/shutdown_reason", '', $true) | Out-Null }
 }
 
 # --------------------------------------------------------- remote control ----
+# Mac dinh TAT (RemoteControl.Enabled = $false). Giu lai de bat khi can.
 function Invoke-RemoteCommand {
   param([string]$Payload)
-
   $cmd = "$Payload".Trim().ToLower()
   if ([string]::IsNullOrWhiteSpace($cmd)) { return }
   Write-Log "Nhan lenh tu xa qua MQTT: '$cmd'" 'ALERT'
-
-  # Xoa ngay retained (neu co) de khong chay lai o lan ket noi sau
   if ($script:Mqtt) { $script:Mqtt.Publish($TCmd, '', $true) | Out-Null }
-
-  if (-not $Cfg.RemoteControl -or -not $Cfg.RemoteControl.Enabled) {
-    Write-Log 'RemoteControl dang tat -> bo qua lenh.' 'WARN'
-    return
-  }
+  if (-not (Test-RemoteEnabled)) { Write-Log 'RemoteControl dang tat -> bo qua.' 'WARN'; return }
   $g = [int]$Cfg.RemoteControl.GraceSeconds
-
   switch ($cmd) {
     'shutdown' {
-      if (-not $Cfg.RemoteControl.AllowShutdown) { Write-Log 'AllowShutdown = false -> tu choi.' 'WARN'; return }
       if ($DryRun) { Write-Log '[DryRun] Bo qua shutdown tu xa.' 'WARN'; return }
-      & shutdown.exe '/s' '/f' '/t' "$g" '/c' "Tat may theo lenh tu Home Assistant (sau $g giay)."
+      & shutdown.exe '/s' '/f' '/t' "$g" '/c' "Tat may theo lenh tu Home Assistant."
       Write-Log "Da phat lenh TAT MAY tu xa, dem nguoc $g giay." 'ALERT'
     }
     'restart' {
-      if (-not $Cfg.RemoteControl.AllowRestart) { Write-Log 'AllowRestart = false -> tu choi.' 'WARN'; return }
       if ($DryRun) { Write-Log '[DryRun] Bo qua restart tu xa.' 'WARN'; return }
-      & shutdown.exe '/r' '/f' '/t' "$g" '/c' "Khoi dong lai theo lenh tu Home Assistant (sau $g giay)."
+      & shutdown.exe '/r' '/f' '/t' "$g" '/c' "Khoi dong lai theo lenh tu Home Assistant."
       Write-Log "Da phat lenh KHOI DONG LAI tu xa, dem nguoc $g giay." 'ALERT'
     }
     'cancel' {
-      if ($DryRun) { Write-Log '[DryRun] Bo qua cancel.' 'WARN'; return }
+      if ($DryRun) { return }
       try { & shutdown.exe '/a' 2>&1 | Out-Null } catch { }
       $script:ShutdownIssued = $false
-      Write-Log 'Da HUY lenh tat/khoi dong lai dang cho.' 'ALERT'
+      Write-Log 'Da HUY lenh dang cho.' 'ALERT'
     }
     default { Write-Log "Lenh khong hieu: '$cmd'" 'WARN' }
   }
 }
 
-function Invoke-OutletCommand {
-  param([string]$Payload)
-
-  $want = "$Payload".Trim().ToUpper()
-  if ([string]::IsNullOrWhiteSpace($want)) { return }
-  if ($script:Mqtt) { $script:Mqtt.Publish($TOutletSet, '', $true) | Out-Null }
-
-  if (-not (Test-OutletControlEnabled)) {
-    Write-Log 'AllowOutletControl dang tat -> bo qua lenh o cam.' 'WARN'
-    return
-  }
-  if ($want -ne 'ON' -and $want -ne 'OFF') {
-    Write-Log "Lenh o cam khong hieu: '$want'" 'WARN'
-    return
-  }
-
-  Write-Log "Nhan lenh o cam P1: $want" 'ALERT'
-  if ($DryRun) { Write-Log '[DryRun] Bo qua lenh o cam.' 'WARN'; return }
-
-  $r = Set-UpsOutlet -State $want -Number 1
-  if ($r.Accepted) {
-    Write-Log "O cam P1 -> $want  ($($r.Command) tra ve $($r.Reply))" 'ALERT'
-  } else {
-    Write-Log "UPS TU CHOI lenh o cam: $($r.Command) tra ve $($r.Reply)" 'WARN'
-  }
-
-  # Doc lai trang thai that va day len HA ngay de cong tac khong bi lech
-  Start-Sleep -Milliseconds 800
-  $script:LastOutlet = Get-UpsOutlet 1
-  if ($script:Mqtt -and $script:LastState) { Publish-State $script:LastState $script:LastOutlet }
-}
-
-# Thay cho Start-Sleep: vua cho, vua lang nghe lenh MQTT, vua giu keepalive.
-function Wait-WithCommands {
+# Thay cho Start-Sleep: vua cho, vua giu keepalive, vua nghe lenh (neu bat).
+function Wait-Tick {
   param([int]$Seconds)
   $deadline = (Get-Date).AddSeconds($Seconds)
   while ((Get-Date) -lt $deadline) {
@@ -389,11 +412,7 @@ function Wait-WithCommands {
       if ($remainMs -le 0) { break }
       $slice = [Math]::Min(1000, [Math]::Max(100, $remainMs))
       if ($script:Mqtt.TryReadMessage($slice)) {
-        $topic = $script:Mqtt.LastTopic
-        $body = $script:Mqtt.LastPayload
-        if ($topic -eq $TOutletSet) { Invoke-OutletCommand $body }
-        elseif ($topic -eq $TCmd) { Invoke-RemoteCommand $body }
-        else { Write-Log "Bo qua message tu topic la: $topic" 'WARN' }
+        if ($script:Mqtt.LastTopic -eq $TCmd) { Invoke-RemoteCommand $script:Mqtt.LastPayload }
       } elseif (-not $script:Mqtt.IsConnected) {
         Write-Log "Mat ket noi MQTT: $($script:Mqtt.LastError)" 'WARN'
         $script:Mqtt = $null
@@ -416,14 +435,14 @@ $sdc = $Cfg.Shutdown
 Write-Log ('Nguong tat may: pin<={0}%  battV<={1}V  runtime<={2}phut  onbattery>={3}s  confirm={4} lan  grace={5}s  enabled={6}' -f
   $sdc.BatteryPercentBelow, $sdc.BatteryVoltageBelow, $sdc.RuntimeMinutesBelow,
   $sdc.OnBatterySecondsAbove, $sdc.ConfirmReadings, $sdc.GraceSeconds, $sdc.Enabled)
-Write-Log ("Dieu khien o cam P1: {0}" -f $(if (Test-OutletControlEnabled) { 'BAT' } else { 'TAT' }))
+Write-Log ('Dieu khien tu xa: {0}' -f $(if (Test-RemoteEnabled) { 'BAT' } else { 'TAT (chi doc)' }))
 
+Load-Events
 if ($UseMqtt) { Connect-Mqtt | Out-Null }
 
 $script:OnBatterySince = $null
 $script:ConfirmCount = 0
 $script:ShutdownIssued = $false
-$script:LastState = $null
 $commsFail = 0
 $lastMode = ''
 
@@ -436,10 +455,9 @@ try {
       Write-Log "Khong doc duoc UPS (lan thu $commsFail)" 'WARN'
       if ($commsFail -eq 3 -and $script:Mqtt) { $script:Mqtt.Publish($TAvail, 'offline', $true) | Out-Null }
       if ($Once) { break }
-      Wait-WithCommands $Cfg.Poll.NormalSeconds
+      Wait-Tick $Cfg.Poll.NormalSeconds
       continue
     }
-    $script:LastState = $s
 
     if ($commsFail -gt 0) {
       Write-Log "Da doc lai duoc UPS sau $commsFail lan loi"
@@ -453,26 +471,34 @@ try {
       $lastMode = $s.Mode
     }
 
-    # Trang thai o cam P1 - UPS tu ngat no sau mot khoang chay pin
+    # Trang thai o cam P1 (chi doc) - UPS tu ngat no sau mot khoang chay pin
     $outlet = Get-UpsOutlet 1
     if ($outlet -and $outlet -ne $script:LastOutlet) {
       if ($script:LastOutlet) {
-        Write-Log "O cam lap trinh P1 doi trang thai: $($script:LastOutlet) -> $outlet" 'ALERT'
+        Write-Log "O cam lap trinh P1: $($script:LastOutlet) -> $outlet" 'ALERT'
+        if ($outlet -eq 'OFF' -and $script:Current) { $script:Current.outlet_shed = $true }
       }
       $script:LastOutlet = $outlet
     }
 
+    # ---- nhat ky mat dien / co dien lai ----
     if ($s.OnBattery) {
       if (-not $script:OnBatterySince) {
         $script:OnBatterySince = Get-Date
+        $script:Current = New-OutageEvent $s
         Write-Log ('MAT DIEN LUOI - chay pin. Pin {0}%, {1}V, con {2} phut, tai {3}%' -f
           $s.BatteryPercent, $s.BatteryVoltage, $s.RuntimeMinutes, $s.LoadPercent) 'ALERT'
+        Publish-Events
+      } else {
+        Update-OutageEvent $s
       }
     } else {
       if ($script:OnBatterySince) {
         $dur = [int]((Get-Date) - $script:OnBatterySince).TotalSeconds
-        Write-Log "Dien luoi da phuc hoi sau $dur giay chay pin." 'ALERT'
+        Write-Log ('CO DIEN LAI sau {0}' -f (Format-Duration $dur)) 'ALERT'
         $script:OnBatterySince = $null
+        Close-OutageEvent
+        Publish-Events
       }
       $script:ConfirmCount = 0
       if ($script:ShutdownIssued) {
@@ -483,6 +509,7 @@ try {
 
     if ($UseMqtt -and -not $script:Mqtt) { Connect-Mqtt | Out-Null }
     Publish-State $s $script:LastOutlet
+    if ($script:Current) { Publish-Events }   # cap nhat su kien dang dien ra
 
     if ($Cfg.Shutdown.Enabled -and -not $script:ShutdownIssued) {
       $reason = Test-ShutdownCondition $s
@@ -499,14 +526,21 @@ try {
 
     if ($Once) {
       $s | Format-List | Out-String | Write-Host
-      "O cam P1 : $script:LastOutlet" | Write-Host
+      "O cam P1     : $script:LastOutlet"       | Write-Host
+      "So su kien   : $($script:Events.Count)"  | Write-Host
       break
     }
 
     $wait = if ($s.OnBattery) { $Cfg.Poll.OnBatterySeconds } else { $Cfg.Poll.NormalSeconds }
-    Wait-WithCommands $wait
+    Wait-Tick $wait
   }
 } finally {
+  # Mat dien dot ngot: giu lai su kien dang do de khong mat du lieu
+  if ($script:Current) {
+    $script:Current.duration_s = [int]((Get-Date) - [datetime]$script:Current.start).TotalSeconds
+    $script:Events += ,$script:Current
+    Save-Events
+  }
   if ($script:Mqtt) {
     try {
       $script:Mqtt.Publish($TAvail, 'offline', $true) | Out-Null

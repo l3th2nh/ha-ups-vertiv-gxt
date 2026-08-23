@@ -16,26 +16,30 @@
     OnBatterySeconds = 5    # chu ky doc khi dang chay pin (doc day hon)
   }
 
+  # Nhat ky su kien mat dien / co dien lai
+  Events = @{
+    KeepCount = 50   # so su kien gan nhat giu lai (file + day len HA)
+  }
+
   Shutdown = @{
     Enabled = $true
 
     # Tat may khi DANG CHAY PIN va thoa BAT KY dieu kien nao duoi day.
     # Dat 0 de tat tung dieu kien.
 
-    # (1) Theo phan tram pin do UPS bao.
-    #     LUU Y: chua kiem chung do phan giai that (xem README muc "Do phan giai
-    #     phan tram pin"). Neu UPS chi bao theo buoc 25% thi moi gia tri 1..25
-    #     deu hanh xu giong het nhau. Vi vay KHONG nen dung lam chot chan duy nhat.
-    BatteryPercentBelow = 25
-
-    # (2) Theo dien ap pin - do phan giai 0.1V nen dang tin cay nhat.
+    # (1) Theo dien ap pin - do phan giai 0.1V nen dang tin cay NHAT.
     #     Pack 6 binh x 12V = 72V danh dinh. Float ~82V. Cat tai ~63V (10.5V/binh).
     #     66.0V ~ 11.0V/binh = con it nhung chua kiet -> du thoi gian tat may.
     BatteryVoltageBelow = 66.0
 
+    # (2) Theo phan tram pin. Da do thuc te: buoc nhay 1% (98 -> 97 -> 96...),
+    #     KHONG phai buoc 25% nhu lo ngai ban dau.
+    BatteryPercentBelow = 25
+
     # (3) Theo so phut UPS uoc tinh con lai.
-    #     LUU Y: luc chay dien luoi gia tri nay nhieu rat manh (do duoc 96..215
-    #     phut trong 8 lan doc lien tiep). Khi chay pin thi on dinh hon nhieu.
+    #     CANH BAO: gia tri nay nhieu RAT nang - do duoc 96..215 phut giua cac
+    #     lan doc cach nhau 1.2 giay, ke ca khi dang chay pin. Chi nen de lam
+    #     luoi an toan cuoi cung, khong dung lam chot chan chinh.
     RuntimeMinutesBelow = 10
 
     # (4) Da chay pin lien tuc qua N giay (0 = bo qua).
@@ -49,14 +53,17 @@
     GraceSeconds = 60
   }
 
-  # Dieu khien tu xa qua MQTT (HA tao san 3 nut bam).
-  # CANH BAO: ai truy cap duoc broker MQTT deu co the tat may nay.
+  # Dieu khien tu xa qua MQTT. MAC DINH TAT - he chi DOC va GHI NHAT KY.
+  #
+  # Khi bat, agent chi SUBSCRIBE topic  <BaseTopic>/cmd  va chap nhan 3 payload:
+  #   shutdown | restart | cancel
+  # KHONG co nut nao duoc tao san trong HA (panel card cung khong co nut).
+  # Muon dung thi tu tao automation trong HA publish vao topic do.
+  #
+  # CANH BAO: khi bat, ai truy cap duoc broker MQTT deu co the tat may nay.
   RemoteControl = @{
-    Enabled       = $true
-    AllowShutdown = $true
-    AllowRestart  = $true
-    AllowOutletControl = $true   # bat/tat o cam P1 tu HA
-    GraceSeconds  = 30   # dem nguoc khi bam nut tu HA
+    Enabled      = $false
+    GraceSeconds = 30
   }
 
   Mqtt = @{

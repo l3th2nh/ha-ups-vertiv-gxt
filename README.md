@@ -188,7 +188,12 @@ thiết bị khác đang cắm chung.
 
 ---
 
-# Độ phân giải phần trăm pin — CHƯA kết luận được
+# Độ phân giải phần trăm pin — ĐÃ ĐO ĐƯỢC: bước 1%
+
+**Kết luận:** phần trăm pin chạy thang **liên tục 0–100, bước nhảy 1%** — KHÔNG phải
+bước 25% như lo ngại ban đầu. Đo trong lần xả pin thật: `098 → 097 → 096 → ...`
+
+Phần dưới là dữ liệu gốc của lần đo đó.
 
 Đo 8 lần liên tiếp lúc UPS đang sạc đầy:
 
@@ -205,9 +210,8 @@ QBV -> (082.1 06 01 100 099
                       %  phút
 ```
 
-**Phần trăm luôn đúng bằng `100`.** Ở trạng thái sạc đầy thì mọi thang đo — dù liên tục
-0–100 hay chỉ có bước 0/25/50/75/100 — đều cho ra `100`. **Không thể phân biệt nếu không xả pin.**
-Cách duy nhất kết luận: ngắt điện đầu vào UPS và quan sát chuỗi giá trị khi nó tụt xuống.
+Lúc UPS sạc đầy thì phần trăm luôn đúng bằng `100`, không phân biệt được thang đo.
+Phải xả pin thật mới thấy — và khi xả, giá trị tụt từng 1% một.
 
 **Phát hiện đáng lo hơn:** cột **số phút dự phòng nhiễu rất nặng** — 8 lần đọc cách nhau
 ~1.2 giây cho ra **96 → 192 → 200 → 215 → 194 → 96 → 206 → 183**. Biên độ hơn gấp đôi.
@@ -282,64 +286,6 @@ Agent đặt `obj_id` trong discovery nên entity_id **cố định và đoán t
 
 ---
 
-# Tắt / bật máy tính từ xa
-
-## Tắt và khởi động lại — ĐÃ LÀM XONG
-
-Agent subscribe topic `ups/vertiv_gxt3000/cmd`. HA tự tạo 3 nút:
-
-| Entity | Payload | Việc thực hiện |
-|---|---|---|
-| `button.ups_pc_shutdown` | `shutdown` | `shutdown /s /f /t 30` |
-| `button.ups_pc_restart` | `restart` | `shutdown /r /f /t 30` |
-| `button.ups_cancel_shutdown` | `cancel` | `shutdown /a` |
-
-Card panel có sẵn 3 nút này kèm hộp xác nhận. Chỉnh thời gian đếm ngược ở
-`RemoteControl.GraceSeconds`.
-
-> **Cảnh báo bảo mật:** bất kỳ ai truy cập được broker MQTT đều tắt được máy này.
-> Đặt `RemoteControl.Enabled = $false` nếu không cần.
->
-> Lệnh retained được xoá ngay sau khi xử lý, tránh việc máy tự tắt lặp lại mỗi lần
-> agent kết nối lại.
-
-## Bật máy từ xa — CẦN CẮM DÂY MẠNG
-
-Wake-on-LAN đã sẵn sàng ở phía Windows. `powercfg /devicequery wake_armed` cho thấy
-**cả hai card Ethernet đều đã được phép đánh thức máy**:
-
-| Card | MAC | Trạng thái |
-|---|---|---|
-| Intel I211 Gigabit | `40-16-7E-A4-D2-93` | **Chưa cắm dây** |
-| Intel I219-V | `10-7B-44-16-25-5D` | **Chưa cắm dây** |
-| Qualcomm QCA61x4A (WiFi) | `6E-0B-8A-27-A6-AB` | Đang dùng — **WoL không khả dụng** |
-
-Máy đang chạy WiFi, mà **Wake-on-WLAN trên chip Qualcomm này không dùng được thực tế**.
-Nên **muốn bật máy từ xa thì phải cắm dây LAN.**
-
-Sau khi cắm dây, thêm vào `configuration.yaml` của HA:
-
-```yaml
-wake_on_lan:
-
-switch:
-  - platform: wake_on_lan
-    name: PC UPS
-    mac: "40:16:7E:A4:D2:93"      # doi theo cong Ethernet ban cam that
-    host: 192.168.0.196
-    turn_off:
-      service: button.press
-      target:
-        entity_id: button.ups_pc_shutdown
-```
-
-Hai điều kiện phía BIOS/Windows cần kiểm tra thêm:
-- BIOS: bật **Wake on LAN** / **Power On by PCI-E**
-- Windows: **tắt Fast Startup** (Control Panel → Power Options → Choose what the power
-  buttons do). Fast Startup khiến máy vào trạng thái hybrid và thường làm WoL từ trạng
-  thái tắt hẳn không hoạt động.
-
----
 
 # Ổ cắm lập trình được (PROGRAMMABLE OUTLETS P1)
 
@@ -528,3 +474,76 @@ Muốn ổ P1 không bao giờ tự ngắt: đặt **07** lên giá trị lớn,
 | Overload | 2 tiếng mỗi giây |
 | Fault | kêu liên tục |
 | Bypass Mode | 10 giây một tiếng |
+
+---
+
+# Kiến trúc cuối: CHỈ ĐỌC + nhật ký
+
+Đã bỏ toàn bộ điều khiển trên HA theo yêu cầu. Hệ chỉ làm ba việc:
+
+1. **Đọc** toàn bộ thông số UPS qua USB
+2. **Ghi nhật ký** mỗi lần mất điện / có điện lại
+3. **Tự tắt máy** an toàn khi sắp hết pin
+
+Panel không có nút nào — đã kiểm tra bằng grep, trong `dist/ups-panel-card.js` không còn
+lời gọi `callService` nào.
+
+## Nhật ký sự kiện
+
+Mỗi lần mất điện là một bản ghi, lưu ở `logs/power-events.json` (**sống sót qua reboot**)
+và đẩy lên HA qua `sensor.ups_power_events` (mảng nằm trong attributes).
+
+```json
+{
+  "start": "2026-08-24T00:08:00",  "end": "2026-08-24T00:21:00",
+  "duration_s": 780,
+  "battery_start": 98, "battery_end": 90, "battery_min": 90,
+  "voltage_start": 82.1, "voltage_min": 71.8,
+  "load_max": 11,
+  "outlet_shed": true,        // ổ P1 có bị UPS tự ngắt trong lần này không
+  "shutdown_fired": false,    // đã kích hoạt tự tắt máy chưa
+  "ongoing": false
+}
+```
+
+Sự kiện **đang diễn ra** cũng được đẩy lên ngay (`ongoing: true`) nên panel hiển thị realtime
+lúc đang mất điện. Nếu máy bị cắt điện đột ngột, khối `finally` vẫn kịp lưu bản ghi dở dang.
+
+Số sự kiện giữ lại: `Events.KeepCount` trong config (mặc định 50).
+
+## Hai cái bẫy JSON của PowerShell 5.1 (đã xử lý)
+
+Cả hai đều làm hỏng nhật ký một cách âm thầm, nên ghi lại đây:
+
+**1. Ghi — mảng 1 phần tử mất dấu `[ ]`**
+
+```powershell
+@($mot) | ConvertTo-Json -Compress            # -> {"start":"t9"}     SAI
+ConvertTo-Json -InputObject ([object[]]$x)    # -> [{"start":"t9"}]   ĐÚNG
+```
+
+**2. Đọc — `ConvertFrom-Json` trả cả mảng dưới dạng MỘT object**
+
+```powershell
+@($json | ConvertFrom-Json)                   # -> 1 phần tử chứa mảng   SAI
+$a = @(); foreach ($e in ($json | ConvertFrom-Json)) { $a += ,$e }   # ĐÚNG
+```
+
+Bẫy 2 nguy hiểm hơn vì JSON ghi ra hoàn toàn đúng — chỉ khi đọc lại mới hỏng, và
+`.Count` trả về 1 thay vì báo lỗi.
+
+## Panel 2 tab
+
+| Tab | Nội dung |
+|---|---|
+| **Thông tin** | Sơ đồ dòng điện, thanh pin, 6 ô thông số, trạng thái ổ P1 (chỉ đọc) |
+| **Nhật ký** | Tổng hợp (số lần / tổng thời gian / lần lâu nhất) + danh sách sự kiện |
+
+Sự kiện đang diễn ra có viền đỏ và nhãn `DANG DIEN RA`; các sự kiện đã kết thúc viền xanh.
+Nhãn phụ: `O P1 bi ngat`, `Da tu tat may`.
+
+## Điều khiển từ xa — còn trong code nhưng TẮT
+
+`RemoteControl.Enabled = $false`. Khi bật, agent chỉ subscribe topic `<BaseTopic>/cmd` và
+nhận 3 payload `shutdown` / `restart` / `cancel`. **Không tạo nút nào trong HA** — muốn dùng
+phải tự viết automation publish vào topic đó.
