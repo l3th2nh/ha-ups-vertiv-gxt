@@ -13,3 +13,8 @@ desktop.ini
 
 # Text trich xuat tu manual cua hang - khong publish
 docs/manual.txt
+
+# Firmware: config that chua mat khau WiFi/MQTT
+firmware/src/config.h
+firmware/.pio/
+firmware/build.log

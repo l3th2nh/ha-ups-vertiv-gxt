@@ -865,3 +865,69 @@ UPS DB9 ──> MAX3232 ──TTL──> CH340/CP210x ──USB──> PC   → 
 
 Đây đúng là chuỗi tín hiệu mà ESP32 sẽ dùng, nên đo xong là biết chắc firmware sẽ chạy.
 Sau đó chỉ việc thay đầu CH340 bằng ESP32.
+
+## Firmware ESP32
+
+Thư mục [`firmware/`](firmware/) — PlatformIO, framework Arduino.
+
+```
+firmware/
+├── platformio.ini
+└── src/
+    ├── config.example.h   ← chép thành config.h rồi điền WiFi/MQTT
+    ├── config.h           ← .gitignore chặn (chứa mật khẩu)
+    ├── ups_protocol.h/.cpp  ← bộ lệnh Voltronic PI01 đã kiểm chứng
+    └── main.cpp             ← WiFi + MQTT + nhật ký
+```
+
+### Chuẩn bị
+
+```bash
+cd firmware/src
+cp config.example.h config.h     # rồi sửa WiFi/MQTT trong config.h
+cd ..
+pio run                          # biên dịch
+pio run -t upload                # nạp vào ESP32
+pio device monitor               # xem log
+```
+
+### Ba tham số phải chỉnh sau khi đo
+
+Trong `config.h`:
+
+```c
+#define UPS_BAUD    2400   // đo bằng Test-UpsSerial.ps1 rồi sửa
+#define UPS_RX_PIN  16     // MAX3232 TXD -> chân này
+#define UPS_TX_PIN  17     // MAX3232 RXD -> chân này
+```
+
+Nhãn `TXD`/`RXD` trên module MAX3232 không thống nhất giữa các hãng. Nếu ESP32 không
+nhận được gì, **đảo hai chân** rồi nạp lại — vô hại, không cháy gì.
+
+### Giữ nguyên hợp đồng MQTT
+
+Firmware đẩy **đúng** topic và payload như agent Windows:
+
+| Topic | Nội dung |
+|---|---|
+| `ups/vertiv_gxt3000/state` | JSON trạng thái, retained |
+| `ups/vertiv_gxt3000/events` | Nhật ký mất điện, retained |
+| `ups/vertiv_gxt3000/availability` | `online` / `offline` (có Last Will) |
+| `homeassistant/+/vertiv_gxt3000/+/config` | 16 entity discovery |
+
+Nhờ vậy **panel, tab Nhật ký và engine cảnh báo bên HA không phải sửa gì** — chỉ đổi
+nguồn cấp dữ liệu từ máy tính sang ESP32.
+
+Firmware cũng theo đúng nguyên tắc ngôn ngữ: **chỉ đẩy mã ASCII** (`Line`, `Battery`…),
+phần chữ tiếng Việt nằm ở `ups-panel-card.js`.
+
+### Nhật ký sống sót qua mất điện
+
+Sự kiện lưu vào **NVS** của ESP32 (`Preferences`), giữ 30 lần gần nhất. Mốc thời gian
+lấy từ **NTP** (múi giờ `ICT-7`). Sự kiện đang diễn ra cũng được đẩy lên ngay
+(`ongoing: true`) nên panel hiển thị realtime lúc đang mất điện.
+
+### ⚠️ Cấp nguồn cho ESP32
+
+Cắm nguồn 5V của ESP32 vào dãy **`OUTPUT`** của UPS, **không phải `P1`**. Ổ P1 bị UPS
+tự ngắt sau vài phút chạy pin — ESP32 sẽ chết đúng lúc cần nó nhất.
