@@ -263,8 +263,44 @@ void setup() {
   delay(200);
   Serial.println("\n[ups] ESP32 UPS bridge khoi dong");
 
-  upsBegin();
-  Serial.printf("[ups] UART2 @ %d baud, RX=%d TX=%d\n", UPS_BAUD, UPS_RX_PIN, UPS_TX_PIN);
+  // ------------------------------------------------------ do toc do baud ---
+  // Manual khong ghi toc do baud. Lan dau chay thi tu do; sau do luu vao NVS
+  // de khoi phai do lai moi lan khoi dong.
+  prefs.begin("ups", true);
+  uint32_t savedBaud = prefs.getUInt("baud", 0);
+  prefs.end();
+
+  uint32_t baud = savedBaud;
+  if (baud) {
+    upsBegin(baud);
+    Serial.printf("[ups] dung toc do da luu: %u baud\n", (unsigned)baud);
+    // Kiem lai: neu khong con dung (doi day, doi UPS) thi do lai tu dau
+    char probe[128];
+    if (!upsCommand("QGS", probe, sizeof(probe), CMD_TIMEOUT_MS) || probe[0] != '(') {
+      Serial.println("[ups] toc do da luu khong con dung -> do lai");
+      baud = 0;
+    }
+  }
+  if (!baud) {
+    baud = upsDetectBaud();
+    if (baud) {
+      prefs.begin("ups", false);
+      prefs.putUInt("baud", baud);
+      prefs.end();
+      Serial.printf("[ups] DA CHOT %u baud, luu vao NVS\n", (unsigned)baud);
+    }
+  }
+  if (!baud) {
+    // Khong toc do nao phan hoi -> van de o phan cung, khong phai baud
+    baud = UPS_BAUD;
+    upsBegin(baud);
+    Serial.println("[ups] KHONG toc do nao phan hoi. Kiem tra:");
+    Serial.println("      1. Da RUT cap USB khoi UPS chua? (USB va RS-232 khong dung cung luc)");
+    Serial.printf("      2. Dao thu hai chan: hien RX=%d TX=%d\n", UPS_RX_PIN, UPS_TX_PIN);
+    Serial.println("      3. Cap null-modem (cheo 2-3) hay dau thang? Thu loai con lai.");
+    Serial.println("      4. MAX3232 co duoc cap 3.3V khong?");
+  }
+  Serial.printf("[ups] UART2 @ %u baud, RX=%d TX=%d\n", (unsigned)baud, UPS_RX_PIN, UPS_TX_PIN);
 
   eventsLoad();
 

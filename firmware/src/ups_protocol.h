@@ -47,8 +47,24 @@ struct UpsStatus {
   bool onBattery() const { return mode == 'B'; }
 };
 
-// Mo UART toi module MAX3232
-void upsBegin();
+// Mo UART toi module MAX3232 o toc do chi dinh
+void upsBegin(uint32_t baud);
+
+/**
+ * Tu do toc do baud: thu lan luot cac gia tri thuong dung, gui QGS, toc do nao
+ * co phan hoi hop le thi tra ve. Tra ve 0 neu khong toc do nao an.
+ *
+ * Manual KHONG ghi toc do baud nen phai do. Lam trong firmware de khoi phai
+ * do bang PC. Ket qua nen luu vao NVS de lan sau khoi do lai.
+ *
+ * Neu tat ca deu im lang thi van de nam o phan cung, khong phai baud:
+ * dau chan sai (thu dao TXD/RXD), hoac cap USB con cam o UPS.
+ */
+uint32_t upsDetectBaud();
+
+// Danh sach toc do se thu, xep theo kha nang giam dan
+extern const uint32_t UPS_BAUD_CANDIDATES[];
+extern const size_t   UPS_BAUD_CANDIDATE_COUNT;
 
 // Gui mot lenh, doc phan hoi den khi gap CR.
 // Tra ve true neu nhan duoc phan hoi (ke ca "(NAK").

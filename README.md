@@ -891,18 +891,30 @@ pio run -t upload                # nạp vào ESP32
 pio device monitor               # xem log
 ```
 
-### Ba tham số phải chỉnh sau khi đo
+### Firmware TỰ DÒ tốc độ baud
 
-Trong `config.h`:
+Manual không ghi tốc độ baud, nên firmware tự đo lúc khởi động: thử lần lượt
+**2400 → 9600 → 1200 → 4800 → 19200 → 38400**, gửi `QGS`, tốc độ nào có phản hồi hợp lệ
+thì chốt và **lưu vào NVS** để lần sau khỏi dò lại.
+
+Mỗi lần khởi động nó vẫn kiểm lại tốc độ đã lưu; nếu không còn đúng (đổi dây, đổi UPS)
+thì tự dò lại từ đầu. Nhờ vậy **không cần đo bằng PC**.
+
+Nếu **mọi** tốc độ đều im lặng thì vấn đề nằm ở phần cứng chứ không phải baud. Firmware
+in ra ngay danh sách cần kiểm, theo thứ tự khả năng giảm dần:
+
+1. Đã **rút cáp USB** khỏi UPS chưa? (USB và RS-232 không dùng cùng lúc)
+2. **Đảo hai chân** `UPS_RX_PIN` ↔ `UPS_TX_PIN` — nhãn TXD/RXD trên module MAX3232
+   không thống nhất giữa các hãng. Vô hại, không cháy gì.
+3. Cáp null-modem (chéo 2-3) hay đầu thẳng? Thử loại còn lại.
+4. MAX3232 có được cấp **3.3V** chưa?
+
+Chỉ còn hai tham số trong `config.h` có thể phải sửa:
 
 ```c
-#define UPS_BAUD    2400   // đo bằng Test-UpsSerial.ps1 rồi sửa
 #define UPS_RX_PIN  16     // MAX3232 TXD -> chân này
 #define UPS_TX_PIN  17     // MAX3232 RXD -> chân này
 ```
-
-Nhãn `TXD`/`RXD` trên module MAX3232 không thống nhất giữa các hãng. Nếu ESP32 không
-nhận được gì, **đảo hai chân** rồi nạp lại — vô hại, không cháy gì.
 
 ### Giữ nguyên hợp đồng MQTT
 
@@ -931,3 +943,47 @@ lấy từ **NTP** (múi giờ `ICT-7`). Sự kiện đang diễn ra cũng đư�
 
 Cắm nguồn 5V của ESP32 vào dãy **`OUTPUT`** của UPS, **không phải `P1`**. Ổ P1 bị UPS
 tự ngắt sau vài phút chạy pin — ESP32 sẽ chết đúng lúc cần nó nhất.
+
+---
+
+# Cấp nguồn cho ESP32 và cổng EPO
+
+## Nguồn 5V lấy từ đâu
+
+UPS **không có** đầu ra 5V — mọi ổ ra đều 220V. Dùng củ sạc USB:
+
+```
+Ổ OUTPUT (220V) ──> củ sạc USB 5V ──> cáp USB ──> ESP32
+```
+
+Điều quan trọng không phải điện áp mà là **cắm vào dãy nào**: dãy `OUTPUT` (luôn có
+điện), **không phải** `P1` (bị UPS tự ngắt sau vài phút chạy pin).
+
+**Vướng mắc thực tế:** ổ ra của máy này là loại **IEC C13** (hình thang, 3 lỗ), củ sạc
+điện thoại không cắm thẳng vào được. Cần thêm **đầu chuyển IEC C14 → ổ cắm 3 chân**
+(~30k) hoặc **ổ chia/PDU có đầu vào IEC**.
+
+## Cổng EPO — đọc trước khi chạm vào
+
+**EPO = Emergency Power Off**, cắt điện khẩn cấp từ xa. Manual mục 2-2 Step 5:
+
+> *Keep the pin 1 and pin 2 closed for UPS normal operation. To activate EPO function,
+> cut the wire between pin 1 and pin 2.*
+
+Đây là mạch **thường ĐÓNG**: có cầu nối giữa chân 1 và 2 thì UPS chạy bình thường.
+**Ngắt mạch đó → UPS cắt toàn bộ đầu ra ngay lập tức.**
+
+Công dụng thiết kế: đấu ra nút đỏ khẩn cấp cạnh cửa phòng máy, để cắt sạch điện trong
+một cú bấm.
+
+> ⚠️ Vì là mạch thường-đóng, **jumper lỏng hoặc rơi ra = mất điện toàn bộ ngay tức khắc**.
+> Kiểm tra cầu nối có cắm chắc không, và đừng rút ra thử.
+
+Dấu hiệu EPO bị kích hoạt (manual mục 3-8):
+
+| Mã trên LCD | Tiếng còi | Xử lý |
+|---|---|---|
+| `E.P` | mỗi giây một tiếng | Nối lại mạch chân 1–2 |
+
+EPO **không** được đưa vào hệ giám sát: nó là mạch cứng, không đọc được qua serial, và
+can thiệp vào đó chỉ thêm rủi ro.

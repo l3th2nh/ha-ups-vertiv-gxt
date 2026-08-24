@@ -4,11 +4,38 @@
 // UART2 cua ESP32 -> module MAX3232
 static HardwareSerial UpsSerial(2);
 
-void upsBegin() {
-  UpsSerial.begin(UPS_BAUD, SERIAL_8N1, UPS_RX_PIN, UPS_TX_PIN);
+// 2400 dat truoc: chuan Megatec/Voltronic pho bien nhat
+const uint32_t UPS_BAUD_CANDIDATES[]   = { 2400, 9600, 1200, 4800, 19200, 38400 };
+const size_t   UPS_BAUD_CANDIDATE_COUNT = sizeof(UPS_BAUD_CANDIDATES) / sizeof(uint32_t);
+
+void upsBegin(uint32_t baud) {
+  UpsSerial.end();
+  UpsSerial.begin(baud, SERIAL_8N1, UPS_RX_PIN, UPS_TX_PIN);
   UpsSerial.setTimeout(CMD_TIMEOUT_MS);
-  delay(100);
-  while (UpsSerial.available()) UpsSerial.read();   // xoa rac luc khoi dong
+  delay(120);
+  while (UpsSerial.available()) UpsSerial.read();   // xoa rac luc doi toc do
+}
+
+uint32_t upsDetectBaud() {
+  char buf[128];
+  for (size_t i = 0; i < UPS_BAUD_CANDIDATE_COUNT; i++) {
+    uint32_t b = UPS_BAUD_CANDIDATES[i];
+    upsBegin(b);
+    Serial.printf("[ups] thu %6u baud ... ", (unsigned)b);
+
+    // Thu 2 lan: lan dau UPS co the con dang on dinh sau khi doi toc do
+    for (int attempt = 0; attempt < 2; attempt++) {
+      if (upsCommand("QGS", buf, sizeof(buf), CMD_TIMEOUT_MS)
+          && buf[0] == '('
+          && strncmp(buf, "(NAK", 4) != 0) {
+        Serial.printf("CO PHAN HOI: %s\n", buf);
+        return b;
+      }
+      delay(200);
+    }
+    Serial.println("im lang");
+  }
+  return 0;
 }
 
 const char* upsModeAlias(char mode) {
