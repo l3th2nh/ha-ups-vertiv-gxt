@@ -800,3 +800,68 @@ Hoặc mở PowerShell bằng **Run as administrator** rồi chạy `.\Install-U
 
 Bản v3.3.1 trở đi, `-Status` chạy không nâng quyền sẽ nói rõ giới hạn này thay vì
 báo nhầm là "chưa cài đặt".
+
+---
+
+# Chuyển sang ESP32 + RS-232 (đang triển khai)
+
+## Vì sao đổi
+
+Máy tính không chạy 24/7. Tệ hơn: đúng lúc mất điện lâu thì máy tự tắt — mất luôn khả
+năng theo dõi ở thời điểm cần nhất. Máy Proxmox (Dell) chạy 24/7 nhưng đặt xa UPS nên
+cáp USB không với tới.
+
+ESP32 giải quyết cả hai: nhỏ, luôn bật, dùng WiFi nên đặt ngay cạnh UPS.
+
+## Kiến trúc mới
+
+```
+UPS ──RS-232──> ESP32 (24/7, WiFi) ──MQTT──> HA          → panel + nhật ký + cảnh báo
+                                              └────────> PC Windows → tự tắt an toàn
+```
+
+**Nguyên tắc then chốt: ESP32 đẩy MQTT với ĐÚNG topic và payload như agent Windows
+hiện tại.** Nhờ vậy panel, nhật ký và engine cảnh báo bên HA **không phải sửa gì cả** —
+chỉ đổi nguồn cấp dữ liệu.
+
+Máy Windows chuyển sang vai trò mới: không đọc USB nữa, mà nghe MQTT rồi tự tắt khi
+chạm ngưỡng. Toàn bộ logic ngưỡng đã có sẵn, chỉ thay nguồn số liệu.
+
+## ⚠️ Chưa biết: baud và sơ đồ chân
+
+Manual **không ghi** tốc độ baud lẫn pinout của cổng RS-232 — chỉ liệt kê "hạng mục 8:
+RS-232 communication port". Chuẩn Megatec/Voltronic thường là **2400 8N1** nhưng đó là
+suy đoán, chưa kiểm chứng trên máy này.
+
+Dùng [`Test-UpsSerial.ps1`](Test-UpsSerial.ps1) để đo trước khi viết firmware. Nó quét
+mọi cổng COM × mọi tốc độ baud × các tổ hợp DTR/RTS, gửi lệnh chỉ-đọc `QGS` và báo cấu
+hình nào có phản hồi.
+
+```powershell
+.\Test-UpsSerial.ps1
+```
+
+**Bắt buộc: RÚT cáp USB khỏi UPS trước khi đo.** Manual ghi rõ *"USB port and RS-232 port
+can't work at the same time"* — cắm cả hai thì RS-232 sẽ im lặng.
+
+## Linh kiện
+
+| Món | Ghi chú |
+|---|---|
+| ESP32 | Loại nào cũng được — **không cần** ESP32-S3, vì đi đường RS-232 chứ không phải USB host |
+| Module **MAX3232** | Chuyển RS-232 (±12V) ↔ TTL 3.3V. Loại có sẵn đầu DB9 cái là tiện nhất |
+| Nguồn 5V | **Cắm vào dãy `OUTPUT` của UPS** — nếu không, ESP32 chết đúng lúc mất điện |
+
+> Module **CP210x / CH340 KHÔNG** cắm thẳng vào cổng RS-232 được. Chúng là mức TTL;
+> RS-232 dùng ±12V, cắm thẳng có thể hỏng chip. Bắt buộc qua MAX3232.
+
+## Cách đo rẻ nhất
+
+Mua MAX3232 trước (đằng nào cũng cần), rồi nối:
+
+```
+UPS DB9 ──> MAX3232 ──TTL──> CH340/CP210x ──USB──> PC   → chạy Test-UpsSerial.ps1
+```
+
+Đây đúng là chuỗi tín hiệu mà ESP32 sẽ dùng, nên đo xong là biết chắc firmware sẽ chạy.
+Sau đó chỉ việc thay đầu CH340 bằng ESP32.
