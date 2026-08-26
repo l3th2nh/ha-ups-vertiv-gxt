@@ -75,6 +75,49 @@ UPS dùng **chân 9, 6, 7**.
 **Hệ quả: không một sợi cáp DB9 bán sẵn nào chạy được** — cả cáp thẳng lẫn cáp
 null-modem chéo 2-3 đều nối vào những chân mà UPS không dùng.
 
+### Sơ đồ chân — nhìn thẳng vào cổng
+
+Cổng RS-232 trên UPS là đầu **CÁI** (9 lỗ). Đầu cái đánh số **ngược chiều** với
+đầu đực để hai bên cắm khớp nhau — đây là chỗ nhầm phổ biến nhất.
+
+**Nhìn thẳng vào cổng trên UPS (thấy 9 lỗ):**
+
+```
+        ╭───────────────────────────╮
+        │   5    4    3    2    1   │
+         ╲    9    8    7    6     ╱
+          ╰───────────────────────╯
+              ▲         ▲    ▲
+              │         │    │
+            UPS PHÁT   GND  UPS THU
+             (pin 9)  (pin7) (pin 6)
+```
+
+Cả ba chân cần dùng đều nằm ở **hàng dưới**. Hàng dưới đọc từ trái sang phải là
+`9 · 8 · 7 · 6` — dùng hết trừ chân 8.
+
+**Nhìn thẳng vào cổng DB9 của module MAX3232 (cũng là đầu CÁI):**
+
+```
+        ╭───────────────────────────╮
+        │   5    4    3    2    1   │
+         ╲    9    8    7    6     ╱
+          ╰───────────────────────╯
+            ▲         ▲    ▲
+            │         │    │
+           GND    module  module
+          (pin 5)  PHÁT    THU
+                  (pin 3) (pin 2)
+```
+
+Ba chân cần dùng ở đây nằm ở **hàng trên**: `5` ngoài cùng bên trái, rồi `3` và `2`.
+
+> Nếu bạn dùng đầu chuyển ra terminal vít thì không cần nhớ vị trí — các cầu đấu
+> đã đánh sẵn số 1–9, cứ theo số mà nối.
+
+> Nếu hàn thẳng vào đầu DB9 **đực**, nhớ rằng nhìn từ mặt trước đầu đực thì số
+> chạy ngược lại: hàng trên là `1 2 3 4 5`, hàng dưới là `6 7 8 9`.
+
 ### Phải tự làm cáp
 
 | UPS (DB9) | → | Module MAX3232 (DB9) |
