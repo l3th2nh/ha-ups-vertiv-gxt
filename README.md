@@ -55,82 +55,21 @@ Thiết bị chạy 24/7 và độc lập với máy tính, nên không có lỗ
 GPIO4/GPIO5 chọn có chủ ý: **tránh GPIO2, GPIO8, GPIO9** vì là chân strapping trên C3 —
 GPIO8 còn là LED onboard, GPIO9 là nút BOOT.
 
-## ⚠️ Cổng RS-232 của UPS dùng chân PHI TIÊU CHUẨN
+## ⚠️ Cổng RS-232 — hai tài liệu, hai sơ đồ chân khác nhau
 
-Đây là điểm quan trọng nhất của cả dự án, và không có trong bất kỳ manual nào của Vertiv.
+Máy này chạy **Voltronic PI01** (`QPI` → `(PI01`), không phải Megatec/Q1 đời cũ
+(`Q1` và `QS` đều trả `(NAK`). Hai giao thức có tài liệu cáp **khác nhau**:
 
-Đặc tả giao thức Megatec quy định sơ đồ chân DB9 **khác hẳn** cổng COM máy tính:
-
-```
-COMPUTER           UPS
-==========================
-   RX    <---  TX  (pin 9)
-   TX     --->  RX  (pin 6)
-   GND   <---  GND (pin 7)
-```
-
-Cổng COM tiêu chuẩn (và mọi module MAX3232 bán sẵn) dùng **chân 2, 3, 5**.
-UPS dùng **chân 9, 6, 7**.
-
-**Hệ quả: không một sợi cáp DB9 bán sẵn nào chạy được** — cả cáp thẳng lẫn cáp
-null-modem chéo 2-3 đều nối vào những chân mà UPS không dùng.
-
-### Sơ đồ chân — nhìn thẳng vào cổng
-
-Cổng RS-232 trên UPS là đầu **CÁI** (9 lỗ). Đầu cái đánh số **ngược chiều** với
-đầu đực để hai bên cắm khớp nhau — đây là chỗ nhầm phổ biến nhất.
-
-**Nhìn thẳng vào cổng trên UPS (thấy 9 lỗ):**
-
-```
-        ╭───────────────────────────╮
-        │   5    4    3    2    1   │
-         ╲    9    8    7    6     ╱
-          ╰───────────────────────╯
-              ▲         ▲    ▲
-              │         │    │
-            UPS PHÁT   GND  UPS THU
-             (pin 9)  (pin7) (pin 6)
-```
-
-Cả ba chân cần dùng đều nằm ở **hàng dưới**. Hàng dưới đọc từ trái sang phải là
-`9 · 8 · 7 · 6` — dùng hết trừ chân 8.
-
-**Nhìn thẳng vào cổng DB9 của module MAX3232 (cũng là đầu CÁI):**
-
-```
-        ╭───────────────────────────╮
-        │   5    4    3    2    1   │
-         ╲    9    8    7    6     ╱
-          ╰───────────────────────╯
-            ▲         ▲    ▲
-            │         │    │
-           GND    module  module
-          (pin 5)  PHÁT    THU
-                  (pin 3) (pin 2)
-```
-
-Ba chân cần dùng ở đây nằm ở **hàng trên**: `5` ngoài cùng bên trái, rồi `3` và `2`.
-
-> Nếu bạn dùng đầu chuyển ra terminal vít thì không cần nhớ vị trí — các cầu đấu
-> đã đánh sẵn số 1–9, cứ theo số mà nối.
-
-> Nếu hàn thẳng vào đầu DB9 **đực**, nhớ rằng nhìn từ mặt trước đầu đực thì số
-> chạy ngược lại: hàng trên là `1 2 3 4 5`, hàng dưới là `6 7 8 9`.
-
-### Phải tự làm cáp
-
-| UPS (DB9) | → | Module MAX3232 (DB9) |
+| Tài liệu | Áp dụng cho | Sơ đồ chân |
 |---|---|---|
-| chân **9** (UPS phát) | → | chân **2** (module thu) |
-| chân **6** (UPS thu) | ← | chân **3** (module phát) |
-| chân **7** (GND) | ↔ | chân **5** (GND) |
+| [Megatec protocol](https://www.networkupstools.org/protocols/megatec.html) | UPS Megatec/Q1 **đời cũ** | chân **9** (UPS TX), **6** (UPS RX), **7** (GND) |
+| [Voltronic protocol](https://networkupstools.org/protocols/voltronic.html) | **đời này** | "9 pins female D-type — only 3 wires: TX, RX (**crossed**) and GND" — **không ghi số chân** |
 
-Cách làm không cần hàn chân DB9: mua **2 đầu chuyển DB9 đực ra terminal vít**
-(khoảng 25–30k mỗi cái), cắm một cái vào UPS, một cái vào module, rồi nối 3 dây
-giữa hai cầu đấu theo bảng trên.
+Tài liệu Voltronic chỉ nói **cáp chéo, 3 dây**, nhiều khả năng là chân tiêu chuẩn
+**2 / 3 / 5** như cổng COM máy tính. Sơ đồ 9/6/7 là của Megatec đời cũ và **đã thử,
+không chạy trên máy này**.
 
-### Tham số cổng (theo đặc tả Megatec)
+### Tham số cổng (cả hai tài liệu đều thống nhất)
 
 | Mục | Giá trị |
 |---|---|
@@ -139,7 +78,37 @@ giữa hai cầu đấu theo bảng trên.
 | Parity | None |
 | Stop bits | 1 |
 
-Nguồn: [Megatec protocol — Network UPS Tools](https://www.networkupstools.org/protocols/megatec.html)
+### Sơ đồ chân DB9 — nhìn thẳng vào cổng
+
+Cả cổng trên UPS lẫn trên module MAX3232 đều là đầu **CÁI** (9 lỗ). Đầu cái đánh số
+**ngược chiều** đầu đực để hai bên cắm khớp — đây là chỗ nhầm phổ biến nhất.
+
+```
+Nhìn thẳng vào đầu CÁI (9 lỗ):        Nhìn thẳng vào đầu ĐỰC (9 chân):
+  ╭─────────────────────────╮           ╭─────────────────────────╮
+  │  5    4    3    2    1  │           │  1    2    3    4    5  │
+   ╲   9    8    7    6    ╱             ╲   6    7    8    9    ╱
+    ╰─────────────────────╯               ╰─────────────────────╯
+```
+
+Trên hầu hết đầu DB9 có số rất nhỏ đúc chìm cạnh chân **1**, **5**, **6**, **9**.
+
+> Dùng **đầu chuyển DB9 ra terminal vít** thì khỏi nhớ vị trí — cầu đấu đã in sẵn
+> số 1–9, cứ theo số mà nối.
+
+## ⚠️ CHƯA KIỂM CHỨNG: UPS có thể cần tắt bật lại để nhả cổng USB
+
+Manual ghi rõ: *"USB port and RS-232 port can't work at the same time."*
+
+Nếu UPS **chốt** cổng đang dùng ở thời điểm khởi động, thì việc rút cáp USB giữa
+chừng có thể **không đủ** — nó vẫn coi USB là cổng hoạt động cho tới khi được reset.
+
+Đây là biến số **duy nhất chưa được thử** sau khi đã loại trừ: sai baud (đã quét hết),
+sai chân (đã thử 2/3/5 thẳng, 2/3/5 chéo, 9/6/7), mất nguồn module (đã đo 3.3V),
+chập dây (đã kiểm), lỗi phần mềm (đã đối chứng trên chân không nối).
+
+> ⚠️ Tắt UPS sẽ **cắt điện toàn bộ tải**. Tắt máy tính và các thiết bị quan trọng
+> trước, hoặc chuyển tạm sang ổ điện tường.
 
 ## ⚠️ Ba điểm dễ hỏng
 
