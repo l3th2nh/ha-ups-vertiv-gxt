@@ -24,8 +24,11 @@ esp32:
     type: arduino
 
 logger:
-  # Khong dung hardware UART cho log: UART1 danh cho UPS, con C3 ghi log qua USB CDC
-  baud_rate: 115200
+  # baud_rate: 0 -> TAT hoan toan hardware UART cua logger, chi ghi log qua USB CDC.
+  # ESP32-C3 chi co UART0 va UART1. De logger giu UART0 la thu hep cho lua chon,
+  # va neu day tin hieu vo tinh nam o GPIO20/GPIO21 (UART0, nhieu bo in san TX/RX)
+  # thi logger se ban thang ra do -> nhieu loan duong RS-232.
+  baud_rate: 0
 
 api:
 
