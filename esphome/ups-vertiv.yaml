@@ -1,0 +1,119 @@
+# Firmware doc UPS Vertiv/Liebert GXT-3000MTPLUS230 qua RS-232.
+# ESP32-C3 Super Mini + module MAX3232. Nap lan dau qua USB; sau do OTA qua WiFi.
+#
+# DAU NOI
+#   MAX3232 VCC -> ESP32-C3 3V3   (KHONG cam 5V)
+#   MAX3232 GND -> ESP32-C3 GND
+#   MAX3232 TXD -> ESP32-C3 GPIO4   (du lieu tu UPS ve)
+#   MAX3232 RXD -> ESP32-C3 GPIO5   (lenh gui sang UPS)
+#   MAX3232 DB9 -> cap null-modem duc-duc -> cong RS-232 cua UPS
+#
+#   Chan 4/5 chon co chu y: tranh GPIO2/8/9 vi la chan strapping tren C3
+#   (GPIO8 con la LED onboard, GPIO9 la nut BOOT).
+#
+# LUU Y: cong USB va cong RS-232 cua UPS KHONG dung duoc cung luc.
+#        Phai rut cap USB khoi UPS thi RS-232 moi noi.
+
+esphome:
+  name: ups-vertiv
+  friendly_name: UPS Vertiv
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: arduino
+
+logger:
+  # Khong dung hardware UART cho log: UART1 danh cho UPS, con C3 ghi log qua USB CDC
+  baud_rate: 115200
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none   # QUAN TRONG: khong cho WiFi ngu -> so lieu khong tre/rot
+  fast_connect: true      # ket noi lai nhanh khi mat song
+  ap:
+    ssid: "UPS-Vertiv Fallback"
+    password: "upsvertiv123"
+
+captive_portal:
+
+# Component doc UPS nam ngay trong repo nay
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [ups_voltronic]
+
+# ---------------------------------------------------------------------------
+#  UART toi module MAX3232
+#
+#  baud_rate: manual KHONG ghi toc do. 2400 la chuan Megatec/Voltronic pho bien
+#  nhat. Neu log bao "Khong co phan hoi cho 'QMOD'..." thi thu lan luot
+#  9600 -> 1200 -> 4800 -> 19200, moi lan chi can OTA lai, khong phai cam day.
+# ---------------------------------------------------------------------------
+uart:
+  id: ups_uart
+  tx_pin: GPIO5
+  rx_pin: GPIO4
+  baud_rate: 2400
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+
+# Ten entity de TIENG ANH cho slug sach va doan truoc duoc.
+# Phan chu tieng Viet nam o panel (ups-panel-card.js) - cung nguyen tac
+# da ap dung cho agent Windows truoc day.
+ups_voltronic:
+  id: ups
+  uart_id: ups_uart
+  update_interval: 15s
+  rated_watts: 2400        # 3000 VA x PF 0.80, lay tu lenh QMD cua chinh may nay
+
+  battery_level:
+    name: "Battery"
+  runtime:
+    name: "Runtime"
+  load:
+    name: "Load"
+  load_power:
+    name: "Load Power"
+  input_voltage:
+    name: "Input Voltage"
+  output_voltage:
+    name: "Output Voltage"
+  battery_voltage:
+    name: "Battery Voltage"
+  input_frequency:
+    name: "Input Frequency"
+  output_frequency:
+    name: "Output Frequency"
+  output_current:
+    name: "Output Current"
+  temperature:
+    name: "Temperature"
+
+  status:
+    name: "Status"
+  on_battery:
+    name: "On Battery"
+  fault:
+    name: "Fault"
+  outlet_p1:
+    name: "Outlet P1"
+
+# Cam bien chan doan de theo doi chinh thiet bi tu xa
+sensor:
+  - platform: wifi_signal
+    name: "WiFi RSSI"
+    update_interval: 60s
+    entity_category: diagnostic
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+    entity_category: diagnostic

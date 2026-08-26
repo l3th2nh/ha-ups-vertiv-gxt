@@ -1,7 +1,7 @@
 """Hang so dung chung cho integration UPS Vertiv."""
 
 DOMAIN = "ups_vertiv"
-VERSION = "3.3.1"
+VERSION = "4.0.0"
 
 PANEL_URL = "ups"
 PANEL_TITLE = "UPS"

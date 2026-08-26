@@ -2,12 +2,12 @@
  * ups-panel-card.js
  * Bảng theo dõi UPS Vertiv / Liebert GXT-3000MTPLUS230 cho Home Assistant.
  *
- * CHỈ ĐỌC — không có nút điều khiển nào. Dữ liệu đến từ agent trên máy Windows
- * (Ups-Monitor.ps1) đẩy lên qua MQTT Discovery.
+ * CHỈ ĐỌC — không có nút điều khiển nào. Dữ liệu đến từ thiết bị ESP32-C3 chạy
+ * ESPHome, đọc UPS qua RS-232 và đẩy lên HA bằng API native của ESPHome.
  *
  * Ba tab:
  *   1. Thông tin — trạng thái và thông số hiện tại
- *   2. Nhật ký   — lịch sử mất điện / có điện lại
+ *   2. Nhật ký   — lịch sử mất điện, dựng lại từ recorder của Home Assistant
  *   3. Cài đặt   — bật/tắt cảnh báo, chọn điện thoại nhận thông báo
  *
  * Card tự dò tiền tố entity nên thường không cần cấu hình gì:
@@ -15,11 +15,11 @@
  * Chỉ đặt `prefix` khi muốn ép thủ công (ví dụ có 2 bộ UPS).
  */
 
-const UPS_CARD_VERSION = '3.3.1';
+const UPS_CARD_VERSION = '4.0.0';
 
-// Agent chỉ đẩy MÃ (alias) thuần ASCII — toàn bộ phần chữ tiếng Việt nằm ở đây.
-// Nhờ vậy file .ps1 không phụ thuộc bảng mã, và muốn đổi câu chữ chỉ sửa một chỗ.
-// Alias do $Global:UpsModeMap trong UpsHid.ps1 sinh ra từ mã QMOD.
+// Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
+// Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
+// Alias sinh từ mã QMOD trong component ups_voltronic.
 const MODE_LABEL = {
   Line:        { cls: 'ok',   label: 'Điện lưới' },
   Battery:     { cls: 'crit', label: 'Chạy pin' },
@@ -33,10 +33,10 @@ const MODE_LABEL = {
   Shutdown:    { cls: 'crit', label: 'Đang tắt' },
 };
 
-// Home Assistant BỎ QUA obj_id trong MQTT discovery và tự sinh entity_id từ
-// tên thiết bị + tên entity. Ví dụ: thiết bị "UPS Vertiv GXT-3000MTPLUS230"
-// + entity "Status" -> sensor.ups_vertiv_gxt_3000mtplus230_status
-// Bảng này ánh xạ khoá logic -> đuôi entity_id do HA sinh ra từ nhãn.
+// Nguồn dữ liệu là thiết bị ESPHome `ups-vertiv`. HA sinh entity_id từ tên
+// thiết bị + tên entity, ví dụ: sensor.ups_vertiv_battery
+// Tên entity trong ESPHome để tiếng Anh cho slug sạch; phần chữ tiếng Việt
+// nằm ngay trong file này.
 const NAME_SUFFIX = {
   battery_percent: 'battery',
   runtime_minutes: 'runtime',
@@ -46,14 +46,17 @@ const NAME_SUFFIX = {
   output_freq: 'output_frequency',
   mode_text: 'status',
   has_warning: 'fault',
-  outlet_p1: 'programmable_outlet_p1',
+  outlet_p1: 'outlet_p1',
   // Các khoá còn lại trùng tên nên không cần ánh xạ:
   // input_voltage, output_voltage, battery_voltage, output_current,
-  // temperature, power_events, on_battery
+  // temperature, on_battery
 };
 
-// Khoá dùng để dò tiền tố vì nó duy nhất và chắc chắn tồn tại
-const PROBE_KEY = 'power_events';
+// Khoá dùng để dò tiền tố: đủ hiếm để không đụng entity khác trong nhà
+const PROBE_KEY = 'output_current';
+
+// Khoảng thời gian dựng lại nhật ký mất điện từ recorder của HA
+const LOG_DAYS = 14;
 
 function fmtDuration(sec) {
   sec = Math.max(0, Math.round(sec || 0));
@@ -81,12 +84,12 @@ class UpsPanelCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { prefix: 'ups', name: 'UPS' };
+    return { prefix: 'ups_vertiv', name: 'UPS Vertiv GXT-3000' };
   }
 
   setConfig(config) {
     this._config = Object.assign(
-      { prefix: 'ups', name: 'UPS Vertiv GXT-3000' }, config || {}
+      { prefix: 'ups_vertiv', name: 'UPS Vertiv GXT-3000' }, config || {}
     );
     this._built = false;
     if (this.shadowRoot) this.shadowRoot.innerHTML = '';
@@ -151,12 +154,106 @@ class UpsPanelCard extends HTMLElement {
     return n === null ? '--' : `${n}${unit ? ' ' + unit : ''}`;
   }
 
-  _events() {
-    const e = this._hass && this._hass.states[this._id('sensor', 'power_events')];
-    if (!e || !e.attributes) return [];
-    const list = e.attributes.events;
-    return Array.isArray(list) ? list : [];
+  // ------------------------------------------------------------ nhật ký ----
+
+  /**
+   * Dựng lại lịch sử mất điện từ recorder của Home Assistant.
+   *
+   * Thiết bị ESPHome không tự lưu nhật ký (khác agent Windows trước đây ghi ra
+   * power-events.json). Nhưng HA đã ghi sẵn lịch sử trạng thái, nên chỉ cần đọc
+   * lại và ghép thành từng lần mất điện — không cần thêm bộ nhớ nào.
+   *
+   * Lấy luôn lịch sử pin và điện áp pin để tính giá trị thấp nhất trong mỗi lần.
+   */
+  async _loadLog() {
+    if (!this._hass || !this._hass.callWS) return;
+    const box = this.shadowRoot.getElementById('ev-list');
+
+    const eOnBat = this._id('binary_sensor', 'on_battery');
+    const eBatt = this._id('sensor', 'battery_percent');
+    const eVolt = this._id('sensor', 'battery_voltage');
+
+    if (!this._hass.states[eOnBat]) {
+      this._outages = [];
+      this._renderLog();
+      return;
+    }
+
+    const end = new Date();
+    const start = new Date(end.getTime() - LOG_DAYS * 24 * 3600 * 1000);
+
+    try {
+      if (box && !this._outages) box.innerHTML = '<div class="empty">Đang đọc lịch sử…</div>';
+      const res = await this._hass.callWS({
+        type: 'history/history_during_period',
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        entity_ids: [eOnBat, eBatt, eVolt],
+        minimal_response: true,
+        no_attributes: true,
+      });
+      this._outages = this._buildOutages(res, eOnBat, eBatt, eVolt);
+    } catch (e) {
+      this._outages = [];
+      this._logError = e.message || String(e);
+    }
+    this._renderLog();
   }
+
+  /** Chuẩn hoá một bản ghi history: HA trả phần tử đầu khác các phần tử sau. */
+  _histRows(res, id) {
+    const raw = (res && res[id]) || [];
+    return raw
+      .map((r) => ({
+        state: r.s !== undefined ? r.s : r.state,
+        t: r.lu !== undefined
+          ? r.lu * 1000
+          : new Date(r.last_updated || r.last_changed).getTime(),
+      }))
+      .filter((r) => r.state !== undefined && !Number.isNaN(r.t))
+      .sort((a, b) => a.t - b.t);
+  }
+
+  _buildOutages(res, eOnBat, eBatt, eVolt) {
+    const bat = this._histRows(res, eOnBat);
+    const pct = this._histRows(res, eBatt);
+    const vol = this._histRows(res, eVolt);
+
+    // Ghép các quãng 'on' liên tiếp thành từng lần mất điện
+    const spans = [];
+    let cur = null;
+    for (const r of bat) {
+      if (r.state === 'on' && !cur) cur = { from: r.t, to: null };
+      else if (r.state === 'off' && cur) { cur.to = r.t; spans.push(cur); cur = null; }
+    }
+    if (cur) spans.push(cur);   // vẫn đang mất điện
+
+    const numIn = (rows, from, to) => {
+      const vals = rows
+        .filter((r) => r.t >= from && (to === null || r.t <= to))
+        .map((r) => Number(r.state))
+        .filter((v) => !Number.isNaN(v));
+      return vals.length ? vals : null;
+    };
+
+    return spans.map((sp) => {
+      const ongoing = sp.to === null;
+      const to = ongoing ? Date.now() : sp.to;
+      const p = numIn(pct, sp.from, sp.to);
+      const v = numIn(vol, sp.from, sp.to);
+      return {
+        start: new Date(sp.from).toISOString(),
+        end: ongoing ? null : new Date(sp.to).toISOString(),
+        duration_s: Math.round((to - sp.from) / 1000),
+        battery_start: p ? p[0] : null,
+        battery_end: p ? p[p.length - 1] : null,
+        battery_min: p ? Math.min(...p) : null,
+        voltage_min: v ? Math.min(...v) : null,
+        ongoing,
+      };
+    });
+  }
+
 
   _setTab(tab) {
     this._tab = tab;
@@ -166,6 +263,7 @@ class UpsPanelCard extends HTMLElement {
       $(`pane-${t}`).style.display = tab === t ? 'block' : 'none';
     }
     if (tab === 'set') this._loadSettings();
+    if (tab === 'log') this._loadLog();
     this._update();
   }
 
@@ -619,46 +717,53 @@ class UpsPanelCard extends HTMLElement {
       $('outlet-sub').textContent = 'Không rõ trạng thái';
     }
 
-    this._renderLog();
-
     const src = this._hass.states[this._id('sensor', 'mode_text')];
     $('foot').textContent = src && (src.last_updated || src.last_changed)
       ? `Cập nhật: ${new Date(src.last_updated || src.last_changed).toLocaleTimeString('vi-VN')}`
       : '';
   }
 
-  // ------------------------------------------------------------- nhật ký ---
+  // ---------------------------------------------------- vẽ tab nhật ký ---
   _renderLog() {
     const $ = (id) => this.shadowRoot.getElementById(id);
-    const evs = this._events().slice().reverse();   // mới nhất lên đầu
+    const box = $('ev-list');
+    if (!box) return;
 
+    const evs = (this._outages || []).slice().reverse();   // mới nhất lên đầu
     const done = evs.filter((e) => !e.ongoing);
     const total = done.reduce((a, e) => a + (e.duration_s || 0), 0);
     const longest = done.reduce((a, e) => Math.max(a, e.duration_s || 0), 0);
-    $('s-count').textContent = evs.length ? String(evs.length) : '0';
+
+    $('s-count').textContent = String(evs.length);
     $('s-total').textContent = done.length ? fmtDuration(total) : '--';
     $('s-max').textContent = longest ? fmtDuration(longest) : '--';
 
-    const box = $('ev-list');
+    if (this._logError) {
+      box.innerHTML = `<div class="empty">Không đọc được lịch sử.<br>
+        <code>${this._logError}</code></div>`;
+      return;
+    }
+    if (!this._outages) {
+      box.innerHTML = '<div class="empty">Đang đọc lịch sử…</div>';
+      return;
+    }
     if (!evs.length) {
-      box.innerHTML = `<div class="empty">Chưa ghi nhận lần mất điện nào.<br>
-        Nhật ký được lưu tại <code>logs/power-events.json</code> trên máy Windows
-        và còn nguyên sau khi khởi động lại.</div>`;
+      box.innerHTML = `<div class="empty">Chưa ghi nhận lần mất điện nào trong
+        ${LOG_DAYS} ngày qua.<br>
+        Nhật ký dựng từ lịch sử của Home Assistant, nên chỉ có dữ liệu kể từ khi
+        thiết bị được thêm vào.</div>`;
       return;
     }
 
     box.innerHTML = evs.map((e) => {
       const live = !!e.ongoing;
-      const tags = [];
-      if (live) tags.push('<span class="tag live">ĐANG DIỄN RA</span>');
-      if (e.outlet_shed) tags.push('<span class="tag shed">Ổ P1 bị ngắt</span>');
-      if (e.shutdown_fired) tags.push('<span class="tag shut">Đã tự tắt máy</span>');
+      const tags = live ? '<span class="tag live">ĐANG DIỄN RA</span>' : '';
 
-      const det = [
-        `Pin ${e.battery_start}% &rarr; ${e.battery_end}%`,
-        `thấp nhất ${e.voltage_min} V`,
-        `tải đỉnh ${e.load_max}%`,
-      ].join(' &middot; ');
+      const det = [];
+      if (e.battery_start !== null && e.battery_end !== null) {
+        det.push(`Pin ${Math.round(e.battery_start)}% &rarr; ${Math.round(e.battery_end)}%`);
+      }
+      if (e.voltage_min !== null) det.push(`thấp nhất ${e.voltage_min.toFixed(1)} V`);
 
       return `
         <div class="ev ${live ? 'live' : 'done'}">
@@ -666,8 +771,8 @@ class UpsPanelCard extends HTMLElement {
             <span class="ev-when">${fmtWhen(e.start)}${live ? '' : ' &rarr; ' + fmtWhen(e.end)}</span>
             <span class="ev-dur">${fmtDuration(e.duration_s)}</span>
           </div>
-          <div class="ev-det">${det}</div>
-          <div>${tags.join('')}</div>
+          ${det.length ? `<div class="ev-det">${det.join(' &middot; ')}</div>` : ''}
+          <div>${tags}</div>
         </div>`;
     }).join('');
   }

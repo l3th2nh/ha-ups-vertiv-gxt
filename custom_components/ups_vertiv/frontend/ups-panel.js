@@ -4,9 +4,11 @@
  *
  * Trang này KHÔNG vẽ lại giao diện — nó tự nạp rồi bọc lại <ups-panel-card>
  * để tránh nhân đôi mã hiển thị.
+ *
+ * Dữ liệu đến từ thiết bị ESP32-C3 chạy ESPHome (xem thư mục esphome/).
  */
 
-const UPS_PANEL_VERSION = '3.3.1';
+const UPS_PANEL_VERSION = '4.0.0';
 const CARD_TAG = 'ups-panel-card';
 
 // Tính một lần, có đường lui: nếu import.meta.url không dùng được thì rơi về
@@ -137,7 +139,8 @@ class UpsVertivPanel extends HTMLElement {
     }
 
     const card = document.createElement(CARD_TAG);
-    card.setConfig({ prefix: 'ups', name: 'UPS Vertiv GXT-3000' });
+    // Khong ep prefix: de card tu dung mac dinh + tu do tien to entity
+    card.setConfig({ name: 'UPS Vertiv GXT-3000' });
     wrap.appendChild(card);
     this._card = card;
     if (this._hass) card.hass = this._hass;

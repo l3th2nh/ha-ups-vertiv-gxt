@@ -1,6 +1,6 @@
 """Engine cảnh báo chạy nền trong Home Assistant.
 
-Theo dõi các entity UPS (do agent Windows đẩy lên qua MQTT) và tự gửi thông báo
+Theo dõi các entity UPS (do thiết bị ESPHome đẩy lên) và tự gửi thông báo
 tới điện thoại. Cấu hình nằm trong panel, lưu vào /config/.storage — KHÔNG cần
 viết YAML.
 
@@ -19,14 +19,14 @@ from .const import DOMAIN, PANEL_URL
 
 _LOGGER = logging.getLogger(__name__)
 
-# Khoá dùng để dò tiền tố: duy nhất và chắc chắn tồn tại
-PROBE_SUFFIX = "_power_events"
+# Khoá dùng để dò tiền tố: đủ hiếm để không đụng entity khác trong nhà
+PROBE_SUFFIX = "_output_current"
 
-# HA sinh entity_id từ tên thiết bị + tên entity (bỏ qua obj_id), nên phải
-# ánh xạ theo đuôi sinh từ nhãn hiển thị.
+# Nguồn dữ liệu là thiết bị ESPHome (ups-vertiv). HA sinh entity_id từ tên
+# thiết bị + tên entity, ví dụ: sensor.ups_vertiv_battery
 SUFFIX = {
     "on_battery": ("binary_sensor", "_on_battery"),
-    "outlet_p1": ("binary_sensor", "_programmable_outlet_p1"),
+    "outlet_p1": ("binary_sensor", "_outlet_p1"),
     "battery": ("sensor", "_battery"),
     "runtime": ("sensor", "_runtime"),
     "load_power": ("sensor", "_load_power"),

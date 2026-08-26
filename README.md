@@ -1,1008 +1,34 @@
-# UPS Vertiv/Liebert GXT-3000MTPLUS230 — Kết quả dò giao thức
+# UPS Vertiv / Liebert GXT-3000MTPLUS230 → Home Assistant
 
-## Phần cứng đã xác minh (2026-08-23)
+Đọc UPS qua **RS-232** bằng **ESP32-C3 + ESPHome**, hiển thị trên panel `/ups` của
+Home Assistant kèm cảnh báo mất điện gửi tới điện thoại.
 
-| Mục | Giá trị |
+```
+UPS ──RS-232──> MAX3232 ──TTL──> ESP32-C3 (ESPHome) ──WiFi──> Home Assistant
+                                                                 ├── panel /ups
+                                                                 └── cảnh báo → điện thoại
+```
+
+Thiết bị chạy 24/7 và độc lập với máy tính, nên không có lỗ hổng dữ liệu.
+
+| Thư mục | Nội dung |
 |---|---|
-| Model ghi trên nhãn | GXT-3000MTPLUS230 (3000VA / 2400W) |
-| Model UPS tự báo (`QMD`) | `G3K` — 3000VA, PF 0.80 → **2400W**, 1 pha/1 pha, 230V/230V |
-| Model firmware (`I`) | `HV 3K`, ver `00007207` |
-| Firmware (`QVFW`) | `VERFW:00072.07` |
-| Định mức (`F` / `QRI`) | 230.0V, 13A, battery 72.0V, 50.0Hz |
-| Cấu hình bình | 6 bình × 12V = 72V nominal (`QMD`, `QBV`) |
-
-## Đường truyền USB
-
-- Cầu nối: **Cypress USB-HID bridge**, `VID_0665` / `PID_5161`
-- Instance: `HID\VID_0665&PID_5161\7&146E9F30&0&0000` (ProblemCode 0 = OK)
-- HID caps: UsagePage `0xFF00` (vendor-defined), Usage `0x0001`
-- Report: Input 9 byte / Output 9 byte (1 byte report-ID + 8 byte payload)
-- Không có string descriptor (Manufacturer/Product đều rỗng) — bình thường với cầu Cypress
-- Ghi lệnh: `HidD_SetOutputReport`, payload chia khối 8 byte, kết thúc bằng CR
-- Đọc: `ReadFile`, gom khối 8 byte đến khi gặp CR
-
-> **QUAN TRỌNG:** vì UsagePage là `0xFF00` chứ không phải `0x84` (HID Power Device),
-> Windows **KHÔNG** nhận UPS này là pin. `Win32_Battery` trả về rỗng.
-> ⇒ Tính năng "critical battery action" có sẵn của Windows KHÔNG dùng được.
-> Bắt buộc phải có phần mềm giám sát riêng.
-
-## Giao thức
-
-**Voltronic PI01** (`QPI` → `(PI01`) — KHÔNG phải Megatec/Q1 đời cũ.
-`Q1` và `QS` đều trả `(NAK`.
-
-### Lệnh chỉ-đọc đã kiểm chứng
-
-| Lệnh | Phản hồi mẫu | Ý nghĩa |
-|---|---|---|
-| `QPI` | `(PI01` | Phiên bản giao thức |
-| `QMOD` | `(L` | Chế độ hiện tại (xem bảng dưới) |
-| `QGS` | `(244.5 50.2 229.9 50.2 000.8 006 373.3 374.3 082.0 ---.- 026.4 100000000001` | Trạng thái tổng hợp |
-| `QBV` | `(082.0 06 01 100 102` | Battery: V, số bình, số pack, %, số phút còn lại |
-| `QWS` | `(0000...0` (64 số 0) | Cờ cảnh báo — toàn 0 = không lỗi |
-| `QFLAG` | `(EpbrahczDovegfjlm` | Cờ bật (sau `E`) / tắt (sau `D`) |
-| `QVFW` | `(VERFW:00072.07` | Firmware |
-| `QRI` | `(230.0 013 072.0 50.0` | Thông số định mức |
-| `QMD` | `(############G3K ###3000 80 1/1 230 230 06 12.0` | Thông tin model |
-| `I` | `#                HV 3K      00007207  ` | Model + version |
-| `F` | `#230.0 013 072.0 50.0` | Định mức |
-| `QHE` | `(242 218` | Ngưỡng dải điện áp high-efficiency |
-
-Không hỗ trợ: `QPIRI`, `QPIGS` (đều `(NAK`).
-
-### Bố cục trường `QGS`
-
-`(1:InV 2:InHz 3:OutV 4:OutHz 5:OutA 6:Load% 7:BUS+ 8:BUS- 9:BattV 10:BattCell 11:TempC 12:StatusBits`
-
-### Bố cục trường `QBV`
-
-`(1:BattV 2:SốBình 3:SốPackSongSong 4:Dung lượng% 5:Số phút backup còn lại`
-
-### Bảng mã `QMOD`
-
-| Mã | Nghĩa |
-|---|---|
-| `P` | Power On (đang khởi động) |
-| `S` | Standby |
-| `Y` | Bypass |
-| `L` | **Line — chạy điện lưới (bình thường)** |
-| `B` | **Battery — ĐANG CHẠY PIN** |
-| `T` | Battery Test |
-| `F` | Fault |
-| `E` | ECO |
-| `C` | Converter |
-| `D` | Shutdown |
-
-> Logic tắt máy nên dựa vào `QMOD` + `QBV` (rõ nghĩa, không mơ hồ),
-> KHÔNG nên dựa vào 12 bit trạng thái cuối của `QGS` — thứ tự bit chưa được
-> kiểm chứng trên model này (bit đầu = `1` trong khi lưới điện vẫn bình thường,
-> nên không thể là "Utility Fail" như tài liệu Voltronic chung mô tả).
-> Muốn xác định chính xác: rút điện đầu vào UPS vài giây rồi so sánh chuỗi bit.
-
-## ⚠️ Lệnh NGUY HIỂM — tuyệt đối không gửi khi đang thử nghiệm
-
-- `T` / `T<nn>` — kích hoạt battery test
-- `S<nn>` / `S<nn>R<mmmm>` — hẹn giờ **TẮT UPS** (mất điện toàn bộ tải)
-- `C` / `CT` — hủy lệnh, nhưng chỉ dùng khi biết rõ ngữ cảnh
-
-## Cách dùng
-
-```powershell
-. .\UpsHid.ps1
-
-Get-UpsStatus            # trạng thái đã giải mã
-Invoke-UpsCommand 'QGS'  # gửi lệnh thô
-Get-UpsHidPath           # đường dẫn HID (tự dò)
-```
-
-## Trạng thái đo được lúc kiểm tra
-
-```
-Mode           : L  (Line - chạy điện lưới)
-InputVoltage   : 242.5 V   @ 50.2 Hz
-OutputVoltage  : 229.6 V   @ 50.2 Hz
-OutputCurrent  : 0.8 A     (Load 10%)
-BatteryVoltage : 82.1 V    (float charge, pack 72V)
-BatteryPercent : 100 %
-RuntimeMinutes : 164 phút
-TemperatureC   : 26.4 °C
-HasWarning     : False
-```
+| [`esphome/`](esphome/) | Firmware ESPHome + component `ups_voltronic` |
+| [`custom_components/ups_vertiv/`](custom_components/ups_vertiv/) | Integration HA: panel `/ups` + engine cảnh báo |
 
 ---
 
-# Bộ giám sát & tự tắt máy
-
-## Các file
-
-| File | Vai trò |
-|---|---|
-| `UpsHid.ps1` | Thư viện nói chuyện với UPS qua USB-HID (P/Invoke `hid.dll`) |
-| `MqttLite.ps1` | MQTT 3.1.1 client tối giản, thuần .NET — không cần cài thư viện |
-| `ups-config.psd1` | **File cấu hình duy nhất cần sửa** |
-| `Ups-Monitor.ps1` | Vòng lặp giám sát: đọc → publish → quyết định tắt máy |
-| `Install-UpsMonitor.ps1` | Đăng ký Scheduled Task chạy nền dưới quyền SYSTEM |
-| `logs/` | Log xoay vòng |
-
-## Cài đặt
-
-1. Sửa `ups-config.psd1` — điền `Mqtt.Username` / `Mqtt.Password`.
-2. Mở PowerShell **Run as administrator**:
-
-```powershell
-cd D:\Iot\ups
-.\Install-UpsMonitor.ps1
-```
-
-## Kiểm tra
-
-```powershell
-.\Ups-Monitor.ps1 -Once -DryRun          # đọc 1 lần, in ra, không tắt máy
-.\Ups-Monitor.ps1 -Once -DryRun -NoMqtt  # bỏ qua cả MQTT
-.\Install-UpsMonitor.ps1 -Status         # trạng thái task + 15 dòng log cuối
-Get-Content .\logs\ups-monitor.log -Tail 30 -Wait
-```
-
-## Logic tắt máy
-
-Chỉ kích hoạt khi **`QMOD` = `B` (đang chạy pin)** và thỏa **bất kỳ** điều kiện:
-
-- Dung lượng pin ≤ `BatteryPercentBelow` (mặc định 30%)
-- UPS báo thời gian còn lại ≤ `RuntimeMinutesBelow` (mặc định 10 phút)
-- Đã chạy pin liên tục ≥ `OnBatterySecondsAbove` (mặc định 0 = tắt điều kiện này)
-
-Chống báo động giả: điều kiện phải đúng **`ConfirmReadings` lần đọc liên tiếp** (mặc định 3).
-Khi chạy pin, chu kỳ đọc tự siết từ 15s xuống 5s.
-
-Khi kích hoạt: chạy `shutdown /s /f /t 60`. **Nếu điện có lại trong 60s đếm ngược
-→ tự động `shutdown /a` để hủy.**
-
-## Tích hợp Home Assistant
-
-Script publish MQTT Discovery nên HA tự tạo thiết bị, **không cần sửa `configuration.yaml`**.
-
-- Broker: `<IP-HOME-ASSISTANT>:1883` (khai báo trong `ups-config.psd1`)
-- State topic: `ups/vertiv_gxt3000/state` (JSON, retained)
-- Availability: `ups/vertiv_gxt3000/availability` — có **Last Will**, nên PC mất điện đột ngột
-  thì HA thấy `offline` ngay
-- Discovery: `homeassistant/{sensor,binary_sensor}/vertiv_gxt3000/+/config` (retained)
-
-**13 entity được tạo:** Battery %, Runtime, Load, Input/Output Voltage, Battery Voltage,
-Input/Output Frequency, Output Current, Temperature, Status, + 2 binary sensor
-(On Battery, Fault).
-
-Nhờ có sẵn trên HA, bạn có thể làm automation kiểu: mất điện → thông báo
-`notify.mobile_app_*`; pin < 50% → tắt bớt thiết bị không thiết yếu.
-
-## Bảo mật
-
-`ups-config.psd1` chứa mật khẩu MQTT dạng plaintext. Trình cài đặt tự chạy `icacls`
-để chỉ `SYSTEM` + `Administrators` + user hiện tại đọc được. Nên tạo **tài khoản MQTT
-riêng** cho UPS thay vì dùng tài khoản HA chính.
-
-## Chưa làm (cân nhắc sau)
-
-Lệnh `S<nn>` tắt hẳn UPS sau khi PC đã shutdown — giúp UPS không xả kiệt pin và tự bật
-lại khi có điện. **Chưa bật** vì nó cắt điện toàn bộ tải, cần cân nhắc kỹ với NAS và các
-thiết bị khác đang cắm chung.
-
----
-
-# Độ phân giải phần trăm pin — ĐÃ ĐO ĐƯỢC: bước 1%
-
-**Kết luận:** phần trăm pin chạy thang **liên tục 0–100, bước nhảy 1%** — KHÔNG phải
-bước 25% như lo ngại ban đầu. Đo trong lần xả pin thật: `098 → 097 → 096 → ...`
-
-Phần dưới là dữ liệu gốc của lần đo đó.
-
-Đo 8 lần liên tiếp lúc UPS đang sạc đầy:
-
-```
-QBV -> (082.1 06 01 100 099
-       (082.1 06 01 100 192
-       (082.0 06 01 100 200
-       (082.1 06 01 100 215
-       (082.1 06 01 100 194
-       (082.1 06 01 100 096
-       (082.0 06 01 100 206
-       (082.1 06 01 100 183
-                     ^^^ ^^^
-                      %  phút
-```
-
-Lúc UPS sạc đầy thì phần trăm luôn đúng bằng `100`, không phân biệt được thang đo.
-Phải xả pin thật mới thấy — và khi xả, giá trị tụt từng 1% một.
-
-**Phát hiện đáng lo hơn:** cột **số phút dự phòng nhiễu rất nặng** — 8 lần đọc cách nhau
-~1.2 giây cho ra **96 → 192 → 200 → 215 → 194 → 96 → 206 → 183**. Biên độ hơn gấp đôi.
-Vì vậy **không nên** dùng `RuntimeMinutesBelow` làm chốt chặn duy nhất.
-
-Kết luận thiết kế: dùng **điện áp pin** làm ngưỡng chính (`BatteryVoltageBelow`).
-Nó có độ phân giải 0.1V (đo được 082.0 / 082.1, chỉ dao động 0.1V) nên ổn định nhất
-trong ba nguồn tín hiệu. Ba ngưỡng còn lại giữ vai trò lưới an toàn chồng lên nhau —
-điều kiện nào chạm trước thì kích hoạt trước.
-
-## Bài kiểm tra thực tế nên làm (~2 phút)
-
-Rút phích cắm **đầu vào** UPS (không rút tải) khoảng 60–90 giây, trong lúc đó chạy:
-
-```powershell
-cd D:\Iot\ups
-. .\UpsHid.ps1
-1..40 | ForEach-Object {
-  '{0}  {1}  {2}' -f (Get-Date -Format 'HH:mm:ss'), (Invoke-UpsCommand 'QMOD'), (Invoke-UpsCommand 'QBV')
-  Start-Sleep -Seconds 2
-}
-```
-
-Bài này trả lời cùng lúc 4 câu:
-1. Phần trăm pin nhảy theo bước bao nhiêu
-2. Số phút dự phòng lúc chạy pin có ổn định hơn không
-3. `QMOD` có thật sự đổi `L` → `B` không (xác thực toàn bộ đường phát hiện mất điện)
-4. 12 bit trạng thái `QGS` — so chuỗi lúc có điện và lúc mất điện để giải mã bit nào là gì
-
----
-
-# Dữ liệu HA đến từ đâu?
-
-```
-UPS ──USB(HID)──> MÁY TÍNH NÀY ──MQTT/WiFi──> Mosquitto ──> Home Assistant
-     Cypress 0665:5161      Ups-Monitor.ps1    <IP-HOME-ASSISTANT>
-```
-
-**Home Assistant nhận dữ liệu từ MÁY TÍNH NÀY, không phải trực tiếp từ UPS.**
-Bản thân UPS không có cổng mạng — nó chỉ có USB và khe IntelliSlot (đang trống).
-
-Hệ quả quan trọng: **máy tính tắt thì HA mất số liệu UPS.** Bộ giám sát có Last Will nên
-HA sẽ hiện `unavailable` ngay chứ không treo số liệu cũ — card panel bắt trạng thái này
-và hiện băng cảnh báo.
-
-**Muốn HA đọc thẳng từ UPS, độc lập với máy tính:** cần lắp card mạng
-**Liebert IntelliSlot** (IS-UNITY-DP / RDU101) vào khe IntelliSlot của GXT3. Khi đó UPS
-có IP riêng, nói SNMP + web, và HA đọc trực tiếp. Đây là phần cứng phải mua thêm.
-
----
-
-# Cài panel vào HA qua HACS
-
-Repo này là **HACS integration** (không phải Lovelace plugin). Cài xong nó tự dựng
-mục **UPS** trên thanh bên tại đường dẫn **`/ups`** — không phải tạo dashboard,
-không phải thêm card, không sửa `configuration.yaml`.
-
-### Bước 1 — Thêm repo vào HACS
-
-HACS → menu ⋮ góc phải → **Custom repositories**
-
-| Ô | Điền |
-|---|---|
-| Repository | `https://github.com/l3th2nh/ha-ups-vertiv-gxt` |
-| Kiểu / Category | **Bộ tích hợp (Integration)** |
-
-### Bước 2 — Cài và khởi động lại
-
-Tìm **UPS Vertiv GXT Panel** → **Download** → **khởi động lại Home Assistant**.
-
-### Bước 3 — Bật lên
-
-*Cài đặt → Thiết bị & Dịch vụ → Thêm tích hợp* → gõ **UPS Vertiv** → Submit.
-
-Xong. Thanh bên hiện mục **UPS**, mở ra là panel đầy đủ 2 tab tại `/ups`.
-
-### Dùng thêm dạng card (tuỳ chọn)
-
-Integration cũng nạp sẵn card cho mọi dashboard, nên muốn nhúng vào dashboard
-khác thì thêm trực tiếp, **không cần khai báo resource**:
-
-```yaml
-type: custom:ups-panel-card
-prefix: ups
-name: UPS Vertiv GXT-3000
-```
-
-`prefix: ups` khớp với `obj_id` mà agent đặt, nên entity_id cố định và card tự tìm
-được hết: `sensor.ups_battery_percent`, `binary_sensor.ups_on_battery`,
-`sensor.ups_power_events`...
-
----
-
-
-# Ổ cắm lập trình được (PROGRAMMABLE OUTLETS P1)
-
-Mặt sau UPS có **hai dãy ổ**:
-
-| Dãy | Nhãn | Hành vi |
-|---|---|---|
-| Trái (3 ổ C13) | `OUTPUT` | **Luôn có điện** khi UPS chạy |
-| Phải (3 ổ) | `PROGRAMMABLE OUTLETS (P1)` | **Tự ngắt sau một khoảng chạy pin** để dành pin cho tải quan trọng |
-
-## Lệnh đã kiểm chứng thực tế
-
-| Lệnh | Phản hồi | Tác dụng |
-|---|---|---|
-| `QSK1` | `(1` / `(0` | Đọc trạng thái P1 (1 = đang bật) |
-| `SKON1` | `(ACK` | **Bật P1** — đã xác nhận chạy đúng |
-| `SKOFF1` | (chưa thử) | Tắt P1 — cùng họ lệnh |
-
-> Chỉ có `QSK1` tồn tại. `QSK2`/`QSK3`/`QSK4` đều trả `(NAK` → UPS này chỉ có **một** nhóm ổ lập trình được.
-
-## Quy ước phản hồi của firmware này
-
-Đây là điểm quan trọng để đọc log về sau:
-
-- **`(ACK`** = lệnh ghi được chấp nhận và đã thực thi
-- **`(NAK`** = lệnh bị từ chối, **không** có tác dụng gì
-
-`SKON1` trả `(ACK`, còn `PDa` / `PEa` / mọi lệnh kèm CRC đều trả `(NAK`.
-Vì vậy họ lệnh `PE`/`PD` thực sự không được firmware hỗ trợ và không đổi được gì.
-
-## ⚠️ CẢNH BÁO BỐ TRÍ TẢI
-
-**KHÔNG cắm máy tính (hoặc NAS, hoặc bất kỳ thiết bị nào cần tắt êm) vào dãy P1.**
-
-P1 được thiết kế để **tự ngắt khi chạy pin**. Cắm máy tính vào đó thì mỗi lần mất điện,
-máy sẽ bị **cắt điện đột ngột** sau vài phút — đúng thứ mà cả hệ thống UPS và script
-tự-tắt-máy này sinh ra để phòng tránh.
-
-- Máy tính, NAS, ổ cứng ngoài → dãy **`OUTPUT`** (luôn có điện)
-- Màn hình, loa, đèn, sạc điện thoại → dãy **`P1`** (ngắt được để kéo dài pin)
-
-Bố trí đúng như vậy thì P1 trở thành công cụ hữu ích: khi mất điện, các tải không thiết
-yếu tự rụng, dồn toàn bộ pin cho máy tính và NAS.
-
----
-
-# Còi báo (buzzer) — chưa điều khiển được
-
-Cờ `a` trong `QFLAG` là còi báo. Nó **đã chuyển từ bật sang tắt** trong phiên làm việc
-ngày 2026-08-24, và tới giờ chưa bật lại được.
-
-```
-Ban đầu   : (EpbrahczDovegfjlm    a nằm sau E  -> còi BẬT
-Hiện tại  : (EpbrhczDoavegfjlm    a nằm sau D  -> còi TẮT
-```
-
-## Đã thử, đều thất bại
-
-| Lệnh | Số lần | Kết quả |
-|---|---|---|
-| `PDa` (tắt còi) | 1 | `(NAK` |
-| `PDa` + CRC16 | 1 | `(NAK` |
-| `PEa` (bật còi) | 13 | `(NAK` toàn bộ |
-
-## Ba giả thuyết, chưa phân định được
-
-1. **UPS tự tắt còi** sau một khoảng chạy pin (nhiều UPS có hành vi này).
-2. **Có người bấm nút mặt máy** — nút trên mặt UPS thường có chức năng tắt tiếng.
-3. **Lệnh `PDa` đã ăn** dù trả về `(NAK`.
-
-Giả thuyết 3 không loại trừ được, vì đã bắt được bằng chứng interface đôi khi trả sai:
-`QFLAG` — một lệnh đọc chắc chắn hợp lệ — có lần trả `(NAK`, và có lần trả `ERR:write`
-(1 lỗi trong 12 lần đọc liên tiếp). **Vì vậy KHÔNG được kết luận "lệnh không được hỗ trợ"
-chỉ từ một lần NAK.**
-
-## Manh mối mạnh nhất: có thể UPS chặn lệnh ghi khi đang chạy pin
-
-- `SKON1` → `(ACK)` — thành công, gửi lúc **`QMOD = L`** (có điện lưới)
-- `PEa` → `(NAK)` 10/10 — gửi lúc **`QMOD = B`** (đang chạy pin)
-
-Nên **thử lại lệnh ghi khi UPS đã về `QMOD = L`** trước khi kết luận là không hỗ trợ.
-
-## Bẫy khi tự kiểm tra
-
-PowerShell `-match` **không phân biệt hoa thường**, nên `'(EpbrhczDoavegfjlm' -match '^\(E[a-z]*a'`
-trả về **true** dù chữ `a` nằm ở nhóm TẮT (vì `[a-z]` khớp luôn chữ `D` viết hoa).
-Dùng hàm này thay thế:
-
-```powershell
-function Test-FlagEnabled {
-  param([string]$QFlag, [string]$Letter)
-  if ($QFlag -notlike '(E*') { return $null }
-  $s = $QFlag.TrimStart('(')
-  $di = $s.IndexOf('D')
-  if ($di -lt 1) { return $null }
-  $s.Substring(1, $di - 1).Contains($Letter)   # .Contains PHAN BIET hoa thuong
-}
-```
-
----
-
-# Kết luận từ User Manual chính hãng
-
-Nguồn: *Liebert GXT MT+ User Manual, 1000–3000 VA* (bản của Vertiv).
-
-## Còi báo — CHỈ tắt/bật được bằng nút trên mặt máy
-
-Mục **3-1 Button operation** ghi rõ:
-
-> **Mute the alarm:** When the UPS is on battery mode, press and hold this button for at
-> least **5 seconds** to **disable or enable** the alarm system. But it's not applied to the
-> situations when warnings or errors occur.
-
-Đây là **toggle vật lý trên nút `ON/MUTE`**, và **chỉ tác dụng khi UPS đang ở battery mode**.
-Khi còi đã tắt, LCD hiện biểu tượng mute (mục 3-2, "Mute operation").
-
-### Cách bật lại còi
-
-1. Rút điện lưới để UPS chuyển sang **battery mode** (bắt buộc — giữ nút lúc có điện lưới không có tác dụng)
-2. Giữ nút **`ON/MUTE`** ít nhất **5 giây**
-3. Kiểm tra biểu tượng mute trên LCD đã biến mất
-4. Cắm điện lưới lại
-
-### Không có lệnh serial nào cho còi báo
-
-Manual **không liệt kê bất kỳ lệnh USB/RS-232 nào** điều khiển còi. Thực nghiệm cũng khớp:
-
-| Lệnh | Số lần | Kết quả |
-|---|---|---|
-| `PEa` / `PDa` | 21 | `(NAK` toàn bộ |
-| `SKON1` (đối chứng, cùng phiên) | 3 | `(ACK` toàn bộ |
-
-Đường ghi hoàn toàn khỏe mạnh, chỉ riêng họ lệnh `PE`/`PD` không tồn tại trên firmware này.
-
-> **Vì vậy KHÔNG thể làm nút tắt tiếng còi trên Home Assistant.** Thay thế tốt hơn: dùng
-> automation bắt `binary_sensor.ups_on_battery` rồi đẩy thông báo qua `notify.mobile_app_*`.
-
-## Hai cổng "IN" / "OUT" — KHÔNG phải RS485
-
-Mục **2-1 Rear View**, hạng mục 5: **"Network/Fax/Modem surge protection"**.
-Mục **2-2 Step 4** mô tả cách dùng:
-
-> Connect a single modem/phone/fax line into surge-protected **"IN"** outlet on the back panel
-> of the UPS unit. Connect from **"OUT"** outlet to the equipment with another cable.
-
-Đây chỉ là **đường chống sét đi xuyên qua**: tín hiệu vào `IN`, ra `OUT`, UPS hấp thụ xung sét
-trên đường dây đó. **Không mang dữ liệu gì của UPS, không phải cổng giao tiếp.**
-
-Danh sách cổng giao tiếp thật của máy (mục 2-1):
-
-| # | Cổng | Ghi chú |
-|---|---|---|
-| 7 | **USB** | Đang dùng — cho toàn bộ dữ liệu |
-| 8 | **RS-232** | *"USB port and RS-232 port can't work at the same time"* |
-| 9 | **SNMP intelligent slot** | Khe lắp card SNMP / AS400 → UPS có IP riêng |
-| 6 | EPO connector | Chập pin 1-2 = hoạt động bình thường; cắt dây = kích hoạt EPO |
-
-## Ổ cắm lập trình — đây là thứ đã gây mất điện
-
-Menu cài đặt trên LCD (giữ **`SELECT`** 5 giây khi UPS ở **standby** hoặc **bypass mode**):
-
-| Mã | Mục | Giá trị |
-|---|---|---|
-| 01 | Output voltage setting | |
-| 02 | Frequency Converter enable/disable | |
-| 03 | Output frequency setting | |
-| 05 | Bypass enable/disable when UPS is off | ENA / DIS |
-| **06** | **Programmable outlets enable/disable** | **ENA / DIS** |
-| **07** | **Programmable outlets setting** | **0–999 phút** |
-| 00 | Exit setting | ESC |
-
-**Mục 07 chính là bộ đếm đã ngắt ổ P1**: số phút chạy pin trước khi nhóm ổ lập trình bị cắt.
-Manual mô tả đúng ý đồ thiết kế (mục 2-2 Step 2):
-
-> During power failure, you may extend the backup time to critical devices by setting shorter
-> backup time for non-critical devices.
-
-Muốn ổ P1 không bao giờ tự ngắt: đặt **07** lên giá trị lớn, hoặc đặt **06 = DIS**.
-
-## Bảng âm báo (mục 3-3)
-
-| Tình huống | Tiếng còi |
-|---|---|
-| Battery Mode | 4 giây một tiếng |
-| Low Battery | mỗi giây một tiếng |
-| Overload | 2 tiếng mỗi giây |
-| Fault | kêu liên tục |
-| Bypass Mode | 10 giây một tiếng |
-
----
-
-# Kiến trúc cuối: CHỈ ĐỌC + nhật ký
-
-Đã bỏ toàn bộ điều khiển trên HA theo yêu cầu. Hệ chỉ làm ba việc:
-
-1. **Đọc** toàn bộ thông số UPS qua USB
-2. **Ghi nhật ký** mỗi lần mất điện / có điện lại
-3. **Tự tắt máy** an toàn khi sắp hết pin
-
-Panel không có nút nào — đã kiểm tra bằng grep, trong `dist/ups-panel-card.js` không còn
-lời gọi `callService` nào.
-
-## Nhật ký sự kiện
-
-Mỗi lần mất điện là một bản ghi, lưu ở `logs/power-events.json` (**sống sót qua reboot**)
-và đẩy lên HA qua `sensor.ups_power_events` (mảng nằm trong attributes).
-
-```json
-{
-  "start": "2026-08-24T00:08:00",  "end": "2026-08-24T00:21:00",
-  "duration_s": 780,
-  "battery_start": 98, "battery_end": 90, "battery_min": 90,
-  "voltage_start": 82.1, "voltage_min": 71.8,
-  "load_max": 11,
-  "outlet_shed": true,        // ổ P1 có bị UPS tự ngắt trong lần này không
-  "shutdown_fired": false,    // đã kích hoạt tự tắt máy chưa
-  "ongoing": false
-}
-```
-
-Sự kiện **đang diễn ra** cũng được đẩy lên ngay (`ongoing: true`) nên panel hiển thị realtime
-lúc đang mất điện. Nếu máy bị cắt điện đột ngột, khối `finally` vẫn kịp lưu bản ghi dở dang.
-
-Số sự kiện giữ lại: `Events.KeepCount` trong config (mặc định 50).
-
-## Hai cái bẫy JSON của PowerShell 5.1 (đã xử lý)
-
-Cả hai đều làm hỏng nhật ký một cách âm thầm, nên ghi lại đây:
-
-**1. Ghi — mảng 1 phần tử mất dấu `[ ]`**
-
-```powershell
-@($mot) | ConvertTo-Json -Compress            # -> {"start":"t9"}     SAI
-ConvertTo-Json -InputObject ([object[]]$x)    # -> [{"start":"t9"}]   ĐÚNG
-```
-
-**2. Đọc — `ConvertFrom-Json` trả cả mảng dưới dạng MỘT object**
-
-```powershell
-@($json | ConvertFrom-Json)                   # -> 1 phần tử chứa mảng   SAI
-$a = @(); foreach ($e in ($json | ConvertFrom-Json)) { $a += ,$e }   # ĐÚNG
-```
-
-Bẫy 2 nguy hiểm hơn vì JSON ghi ra hoàn toàn đúng — chỉ khi đọc lại mới hỏng, và
-`.Count` trả về 1 thay vì báo lỗi.
-
-## Panel 2 tab
-
-| Tab | Nội dung |
-|---|---|
-| **Thông tin** | Sơ đồ dòng điện, thanh pin, 6 ô thông số, trạng thái ổ P1 (chỉ đọc) |
-| **Nhật ký** | Tổng hợp (số lần / tổng thời gian / lần lâu nhất) + danh sách sự kiện |
-
-Sự kiện đang diễn ra có viền đỏ và nhãn `DANG DIEN RA`; các sự kiện đã kết thúc viền xanh.
-Nhãn phụ: `O P1 bi ngat`, `Da tu tat may`.
-
-## Điều khiển từ xa — còn trong code nhưng TẮT
-
-`RemoteControl.Enabled = $false`. Khi bật, agent chỉ subscribe topic `<BaseTopic>/cmd` và
-nhận 3 payload `shutdown` / `restart` / `cancel`. **Không tạo nút nào trong HA** — muốn dùng
-phải tự viết automation publish vào topic đó.
-
----
-
-# Tên entity: HA đặt theo tên thiết bị, không theo `obj_id`
-
-Agent gửi `obj_id` mong HA đặt `sensor.ups_battery_percent`. **HA bỏ qua nó** và tự sinh
-entity_id từ **tên thiết bị + tên entity**:
-
-```
-Thiet bi "UPS Vertiv GXT-3000MTPLUS230" + entity "Status"
-   -> sensor.ups_vertiv_gxt_3000mtplus230_status
-```
-
-Vì vậy card **tự dò tiền tố** thay vì bắt HA đặt tên theo ý mình:
-
-1. Thử tiền tố trong cấu hình (`prefix`, mặc định `ups`)
-2. Không khớp thì tìm entity nào kết thúc bằng `_power_events` — khoá này duy nhất —
-   rồi suy ra tiền tố thật
-3. Với từng khoá, thử tên theo khoá trước, không có thì tra bảng `NAME_SUFFIX`
-
-Nhờ vậy card chạy được bất kể HA đặt tên kiểu nào, và **không cần cấu hình gì**:
-
-```yaml
-type: custom:ups-panel-card
-```
-
-Bảng ánh xạ khoá → đuôi entity_id (những khoá không liệt kê thì trùng tên):
-
-| Khoá | Nhãn hiển thị | Đuôi entity_id |
-|---|---|---|
-| `battery_percent` | Battery | `_battery` |
-| `runtime_minutes` | Runtime | `_runtime` |
-| `load_percent` | Load | `_load` |
-| `load_watts` | Load Power | `_load_power` |
-| `input_freq` | Input Frequency | `_input_frequency` |
-| `output_freq` | Output Frequency | `_output_frequency` |
-| `mode_text` | Status | `_status` |
-| `has_warning` | Fault | `_fault` |
-| `outlet_p1` | Programmable Outlet P1 | `_programmable_outlet_p1` |
-
-## Bẫy đã gặp: tích hợp MQTT bị VÔ HIỆU HÓA
-
-Triệu chứng: broker có đủ dữ liệu, nhưng HA không tạo entity nào; thêm tích hợp MQTT
-thì báo `single_instance_allowed` mà danh sách lại không thấy MQTT đâu.
-
-Nguyên nhân: tích hợp MQTT **đã cài nhưng bị tắt**, nên bị bộ lọc mặc định ẩn đi.
-Dấu hiệu nhận biết: góc trên bên phải trang *Bộ tích hợp* có dòng **"1 bị vô hiệu hóa — Hiển thị"**.
-
-Cách sửa: bấm **Hiển thị** → chọn MQTT → **Bật**. Discovery là retained nên HA đọc lại
-được ngay, không cần chạy lại agent.
-
----
-
-# Tiếng Việt nằm ở đâu?
-
-Nguyên tắc: **`.ps1` chỉ đẩy số liệu và mã (alias) thuần ASCII — toàn bộ chữ tiếng Việt
-nằm trong panel.**
-
-```
-UpsHid.ps1                    ups-panel-card.js
-QMOD = 'L'  ->  'Line'   ->   MODE_LABEL.Line  ->  "Điện lưới"
-         (mã)     (alias)          (bảng dịch)        (hiển thị)
-```
-
-Lý do không đặt tiếng Việt trong `.ps1`: **PowerShell 5.1 đọc file `.ps1` không có BOM
-theo bảng mã ANSI**, làm hỏng dấu. Đã đo thực tế:
-
-```
-File UTF-8 KHÔNG BOM -> 'Äiá»‡n lÆ°á»›i â€” bÃ¬nh thÆ°á»ng'   HỎNG
-File UTF-8 CÓ BOM    -> 'Điện lưới — bình thường'          ĐÚNG
-```
-
-Giữ `.ps1` thuần ASCII thì không bao giờ dính lỗi này, kể cả khi editor vô tình
-lược mất BOM. Muốn đổi câu chữ chỉ cần sửa `MODE_LABEL` trong `ups-panel-card.js`.
-
-Bảng alias (`$Global:UpsModeMap` trong `UpsHid.ps1`):
-
-| Mã QMOD | Alias | Hiển thị trên panel |
-|---|---|---|
-| `L` | `Line` | Điện lưới |
-| `B` | `Battery` | Chạy pin |
-| `Y` | `Bypass` | Chạy bypass |
-| `F` | `Fault` | Lỗi UPS |
-| `E` | `ECO` | Tiết kiệm điện |
-| `C` | `Converter` | Chuyển đổi tần số |
-| `S` | `Standby` | Chờ |
-| `P` | `PowerOn` | Đang khởi động |
-| `T` | `BatteryTest` | Đang kiểm tra pin |
-| `D` | `Shutdown` | Đang tắt |
-
-Alias lạ (firmware khác) sẽ được hiện nguyên văn thay vì nuốt mất thông tin.
-
----
-
-# Thông báo lên điện thoại khi mất điện
-
-File mẫu: [`homeassistant/automation-ups.yaml`](homeassistant/automation-ups.yaml)
-
-### Cài đặt
-
-1. HA → **Cài đặt → Tự động hoá & Cảnh báo → Tạo tự động hoá**
-2. Menu ⋮ góc trên bên phải → **Chỉnh sửa trong YAML**
-3. Xoá nội dung mẫu, dán toàn bộ file trên vào
-4. Sửa **duy nhất** dòng `dien_thoai:` cho đúng máy của bạn
-5. Lưu
-
-Tìm tên dịch vụ: **Công cụ cho nhà phát triển → Hành động** → gõ `notify.` → chọn dòng
-dạng `notify.mobile_app_<tên_điện_thoại>`.
-
-### Năm tình huống được báo
-
-| Khi nào | Thông báo |
-|---|---|
-| Chuyển sang chạy pin | ⚡ Mất điện lưới — kèm % pin, số phút dự phòng, công suất tải |
-| Pin còn 50% (đang chạy pin) | 🔋 Cảnh báo sớm |
-| Pin còn 25% (đang chạy pin) | 🚨 Máy tính sắp tự tắt |
-| UPS tự ngắt ổ P1 | 🔌 Thiết bị ở dãy P1 vừa mất điện |
-| Có điện lưới trở lại | ✅ Đã có điện — kèm % pin còn lại |
-
-Thông báo "mất điện" và "có điện lại" dùng chung `tag: ups_nguon`, nên thông báo mới
-**thay thế** cái cũ — không để lại cảnh báo mất điện lơ lửng sau khi điện đã về.
-
-Bấm vào thông báo sẽ mở thẳng panel `/ups`.
-
-### Thử ngay mà không cần cúp điện
-
-**Công cụ cho nhà phát triển → Trạng thái** → đặt
-`binary_sensor.ups_vertiv_gxt_3000mtplus230_on_battery` = `on`.
-Giá trị này bị ghi đè ở lần agent đẩy dữ liệu kế tiếp nên hoàn toàn vô hại.
-
----
-
-# Cảnh báo mất điện — cấu hình ngay trong panel
-
-Từ **v3.3.0**, integration có **engine cảnh báo chạy nền trong Home Assistant**.
-Không cần viết YAML, không cần tạo automation.
-
-### Dùng thế nào
-
-Mở panel **`/ups`** → tab **Cài đặt**:
-
-| Mục | Ý nghĩa |
-|---|---|
-| Bật cảnh báo | Công tắc tổng |
-| Gửi tới đâu | Chọn `notify.mobile_app_…` của điện thoại; để trống thì chỉ hiện trong HA |
-| Mất điện lưới | Báo ngay khi UPS chuyển sang chạy pin |
-| Có điện trở lại | Báo khi điện lưới phục hồi |
-| Pin xuống dưới N% | Cảnh báo sớm, ngưỡng tự đặt (mặc định 50%) |
-| Pin xuống dưới N% (sắp tự tắt máy) | Cảnh báo nguy cấp (mặc định 25%) |
-| UPS tự ngắt ổ P1 | Báo khi dãy P1 bị shed |
-
-Bấm **Gửi thử** để kiểm tra ngay dịch vụ đã chọn — không phải chờ mất điện thật.
-
-Cấu hình lưu trong `/config/.storage/ups_vertiv`, còn nguyên sau khi khởi động lại HA.
-
-### Vì sao làm trong integration thay vì YAML
-
-Đúng mẫu mà `inverter_bridge` đang chạy: engine nằm trong integration, luật lưu vào
-`.storage`, cấu hình bằng giao diện. Người dùng chỉ bấm chuột, không phải dán YAML
-và không phải sửa lại mỗi lần đổi gì.
-
-Engine bám theo `async_track_state_change_event` nên phản ứng **tức thì** khi mất điện,
-không phải chờ chu kỳ quét.
-
-### Chi tiết kỹ thuật
-
-- Entity được **dò tự động** (tìm entity kết thúc bằng `_power_events` để suy ra tiền tố),
-  nên không hỏng khi HA đổi cách đặt tên. Dò lại mỗi 30 giây phòng khi entity xuất hiện muộn.
-- Cảnh báo pin chỉ bắn **một lần cho mỗi lần mất điện**, reset khi có điện lại —
-  không spam khi pin dao động quanh ngưỡng.
-- Chạm ngưỡng nguy cấp thì bỏ qua luôn mức cảnh báo, tránh hai thông báo liền nhau.
-- Gửi thông báo có **đường lui**: nếu dịch vụ đã chọn lỗi, tin vẫn hiện trong HA kèm
-  ghi chú, không im lặng nuốt mất cảnh báo.
-- Thông báo "mất điện" và "có điện lại" dùng chung `tag` nên cái sau **thay thế** cái trước.
-- Bấm vào thông báo mở thẳng panel `/ups`.
-
-> File [`homeassistant/automation-ups.yaml`](homeassistant/automation-ups.yaml) vẫn còn
-> trong repo cho ai muốn tự viết luật riêng. **Đừng dùng đồng thời cả hai** — sẽ nhận
-> thông báo hai lần.
-
----
-
-# Cài agent chạy nền (Scheduled Task)
-
-```powershell
-cd D:\Iot\ups
-.\Install-UpsMonitor.ps1
-```
-
-Script **tự xin quyền Administrator** — sẽ hiện hộp thoại UAC, bấm **Yes**. Không cần
-tự mở PowerShell nâng quyền.
-
-Nó hỏi thêm một câu nếu phát hiện có bản chạy tay:
-
-```
-CANH BAO: dang co 1 tien trinh Ups-Monitor.ps1 chay tay.
-Dong cac tien trinh do lai? (Y/n):
-```
-
-Nên trả lời **Y**. Hai bản cùng hỏi UPS sẽ đan xen lệnh trên cùng thiết bị HID.
-
-Task được đăng ký với:
-
-| Mục | Giá trị |
-|---|---|
-| Tài khoản | `SYSTEM` (không cần đăng nhập) |
-| Trigger 1 | Khi khởi động máy, **trễ 30 giây** |
-| Trigger 2 | Watchdog mỗi 10 phút — tự hồi sinh nếu agent chết |
-| Chống trùng | `IgnoreNew` (watchdog không tạo bản thứ hai) |
-| Giới hạn thời gian | Không (chạy vô hạn) |
-
-**Vì sao trễ 30 giây:** ngay sau khi boot, card mạng chưa sẵn sàng. Đã đo thực tế —
-MQTT timeout liên tục khoảng một phút rồi mới nối được. Agent vẫn tự thử lại nên không
-sai kết quả, nhưng trễ 30 giây làm log sạch hơn hẳn.
-
-## ⚠️ Bẫy khi kiểm tra: task của SYSTEM bị ẩn với phiên thường
-
-`Get-ScheduledTask` chạy từ PowerShell **không nâng quyền** sẽ **không thấy** task chạy
-dưới SYSTEM. Tương tự, `Win32_Process.CommandLine` của tiến trình SYSTEM trả về rỗng.
-
-**"Không thấy" ở đây KHÔNG có nghĩa là chưa cài.** Muốn biết chắc, xem bằng chứng thật:
-
-```powershell
-# 1. Log có đang được ghi không
-Get-Content .\logs\ups-monitor.log -Tail 20
-
-# 2. Broker có dữ liệu tươi không (cách chắc chắn nhất)
-#    So timestamp trong ups/vertiv_gxt3000/state với giờ hiện tại
-```
-
-Hoặc mở PowerShell bằng **Run as administrator** rồi chạy `.\Install-UpsMonitor.ps1 -Status`.
-
-Bản v3.3.1 trở đi, `-Status` chạy không nâng quyền sẽ nói rõ giới hạn này thay vì
-báo nhầm là "chưa cài đặt".
-
----
-
-# Chuyển sang ESP32 + RS-232 (đang triển khai)
-
-## Vì sao đổi
-
-Máy tính không chạy 24/7. Tệ hơn: đúng lúc mất điện lâu thì máy tự tắt — mất luôn khả
-năng theo dõi ở thời điểm cần nhất. Máy Proxmox (Dell) chạy 24/7 nhưng đặt xa UPS nên
-cáp USB không với tới.
-
-ESP32 giải quyết cả hai: nhỏ, luôn bật, dùng WiFi nên đặt ngay cạnh UPS.
-
-## Kiến trúc mới
-
-```
-UPS ──RS-232──> ESP32 (24/7, WiFi) ──MQTT──> HA          → panel + nhật ký + cảnh báo
-                                              └────────> PC Windows → tự tắt an toàn
-```
-
-**Nguyên tắc then chốt: ESP32 đẩy MQTT với ĐÚNG topic và payload như agent Windows
-hiện tại.** Nhờ vậy panel, nhật ký và engine cảnh báo bên HA **không phải sửa gì cả** —
-chỉ đổi nguồn cấp dữ liệu.
-
-Máy Windows chuyển sang vai trò mới: không đọc USB nữa, mà nghe MQTT rồi tự tắt khi
-chạm ngưỡng. Toàn bộ logic ngưỡng đã có sẵn, chỉ thay nguồn số liệu.
-
-## ⚠️ Chưa biết: baud và sơ đồ chân
-
-Manual **không ghi** tốc độ baud lẫn pinout của cổng RS-232 — chỉ liệt kê "hạng mục 8:
-RS-232 communication port". Chuẩn Megatec/Voltronic thường là **2400 8N1** nhưng đó là
-suy đoán, chưa kiểm chứng trên máy này.
-
-Dùng [`Test-UpsSerial.ps1`](Test-UpsSerial.ps1) để đo trước khi viết firmware. Nó quét
-mọi cổng COM × mọi tốc độ baud × các tổ hợp DTR/RTS, gửi lệnh chỉ-đọc `QGS` và báo cấu
-hình nào có phản hồi.
-
-```powershell
-.\Test-UpsSerial.ps1
-```
-
-**Bắt buộc: RÚT cáp USB khỏi UPS trước khi đo.** Manual ghi rõ *"USB port and RS-232 port
-can't work at the same time"* — cắm cả hai thì RS-232 sẽ im lặng.
-
-## Linh kiện
+# 1. Phần cứng
 
 | Món | Ghi chú |
 |---|---|
-| ESP32 | Loại nào cũng được — **không cần** ESP32-S3, vì đi đường RS-232 chứ không phải USB host |
-| Module **MAX3232** | Chuyển RS-232 (±12V) ↔ TTL 3.3V. Loại có sẵn đầu DB9 cái là tiện nhất |
-| Nguồn 5V | **Cắm vào dãy `OUTPUT` của UPS** — nếu không, ESP32 chết đúng lúc mất điện |
+| **ESP32-C3 Super Mini** | Loại nào cũng được; C3 cần cấu hình riêng (xem dưới) |
+| **Module MAX3232 có DB9** | Chuyển RS-232 (±12V) ↔ TTL 3.3V |
+| **Cáp null-modem DB9 đực–đực** | Cổng RS-232 của UPS là đầu **cái**, module cũng **cái** |
+| Củ sạc USB 5V | Cắm vào dãy `OUTPUT` của UPS |
+| Đầu chuyển IEC C14 → ổ cắm 3 chân | Ổ ra của UPS là **IEC C13**, củ sạc không cắm thẳng được |
 
-> Module **CP210x / CH340 KHÔNG** cắm thẳng vào cổng RS-232 được. Chúng là mức TTL;
-> RS-232 dùng ±12V, cắm thẳng có thể hỏng chip. Bắt buộc qua MAX3232.
-
-## Cách đo rẻ nhất
-
-Mua MAX3232 trước (đằng nào cũng cần), rồi nối:
-
-```
-UPS DB9 ──> MAX3232 ──TTL──> CH340/CP210x ──USB──> PC   → chạy Test-UpsSerial.ps1
-```
-
-Đây đúng là chuỗi tín hiệu mà ESP32 sẽ dùng, nên đo xong là biết chắc firmware sẽ chạy.
-Sau đó chỉ việc thay đầu CH340 bằng ESP32.
-
-## Firmware ESP32
-
-Thư mục [`firmware/`](firmware/) — PlatformIO, framework Arduino.
-
-```
-firmware/
-├── platformio.ini
-└── src/
-    ├── config.example.h   ← chép thành config.h rồi điền WiFi/MQTT
-    ├── config.h           ← .gitignore chặn (chứa mật khẩu)
-    ├── ups_protocol.h/.cpp  ← bộ lệnh Voltronic PI01 đã kiểm chứng
-    └── main.cpp             ← WiFi + MQTT + nhật ký
-```
-
-### Chuẩn bị
-
-```bash
-cd firmware/src
-cp config.example.h config.h     # rồi sửa WiFi/MQTT trong config.h
-cd ..
-pio run                          # biên dịch
-pio run -t upload                # nạp vào ESP32
-pio device monitor               # xem log
-```
-
-### Firmware TỰ DÒ tốc độ baud
-
-Manual không ghi tốc độ baud, nên firmware tự đo lúc khởi động: thử lần lượt
-**2400 → 9600 → 1200 → 4800 → 19200 → 38400**, gửi `QGS`, tốc độ nào có phản hồi hợp lệ
-thì chốt và **lưu vào NVS** để lần sau khỏi dò lại.
-
-Mỗi lần khởi động nó vẫn kiểm lại tốc độ đã lưu; nếu không còn đúng (đổi dây, đổi UPS)
-thì tự dò lại từ đầu. Nhờ vậy **không cần đo bằng PC**.
-
-Nếu **mọi** tốc độ đều im lặng thì vấn đề nằm ở phần cứng chứ không phải baud. Firmware
-in ra ngay danh sách cần kiểm, theo thứ tự khả năng giảm dần:
-
-1. Đã **rút cáp USB** khỏi UPS chưa? (USB và RS-232 không dùng cùng lúc)
-2. **Đảo hai chân** `UPS_RX_PIN` ↔ `UPS_TX_PIN` — nhãn TXD/RXD trên module MAX3232
-   không thống nhất giữa các hãng. Vô hại, không cháy gì.
-3. Cáp null-modem (chéo 2-3) hay đầu thẳng? Thử loại còn lại.
-4. MAX3232 có được cấp **3.3V** chưa?
-
-Chỉ còn hai tham số trong `config.h` có thể phải sửa:
-
-```c
-#define UPS_RX_PIN  16     // MAX3232 TXD -> chân này
-#define UPS_TX_PIN  17     // MAX3232 RXD -> chân này
-```
-
-### Giữ nguyên hợp đồng MQTT
-
-Firmware đẩy **đúng** topic và payload như agent Windows:
-
-| Topic | Nội dung |
-|---|---|
-| `ups/vertiv_gxt3000/state` | JSON trạng thái, retained |
-| `ups/vertiv_gxt3000/events` | Nhật ký mất điện, retained |
-| `ups/vertiv_gxt3000/availability` | `online` / `offline` (có Last Will) |
-| `homeassistant/+/vertiv_gxt3000/+/config` | 16 entity discovery |
-
-Nhờ vậy **panel, tab Nhật ký và engine cảnh báo bên HA không phải sửa gì** — chỉ đổi
-nguồn cấp dữ liệu từ máy tính sang ESP32.
-
-Firmware cũng theo đúng nguyên tắc ngôn ngữ: **chỉ đẩy mã ASCII** (`Line`, `Battery`…),
-phần chữ tiếng Việt nằm ở `ups-panel-card.js`.
-
-### Nhật ký sống sót qua mất điện
-
-Sự kiện lưu vào **NVS** của ESP32 (`Preferences`), giữ 30 lần gần nhất. Mốc thời gian
-lấy từ **NTP** (múi giờ `ICT-7`). Sự kiện đang diễn ra cũng được đẩy lên ngay
-(`ongoing: true`) nên panel hiển thị realtime lúc đang mất điện.
-
-### ⚠️ Cấp nguồn cho ESP32
-
-Cắm nguồn 5V của ESP32 vào dãy **`OUTPUT`** của UPS, **không phải `P1`**. Ổ P1 bị UPS
-tự ngắt sau vài phút chạy pin — ESP32 sẽ chết đúng lúc cần nó nhất.
-
----
-
-# Cấp nguồn cho ESP32 và cổng EPO
-
-## Nguồn 5V lấy từ đâu
-
-UPS **không có** đầu ra 5V — mọi ổ ra đều 220V. Dùng củ sạc USB:
-
-```
-Ổ OUTPUT (220V) ──> củ sạc USB 5V ──> cáp USB ──> ESP32
-```
-
-Điều quan trọng không phải điện áp mà là **cắm vào dãy nào**: dãy `OUTPUT` (luôn có
-điện), **không phải** `P1` (bị UPS tự ngắt sau vài phút chạy pin).
-
-**Vướng mắc thực tế:** ổ ra của máy này là loại **IEC C13** (hình thang, 3 lỗ), củ sạc
-điện thoại không cắm thẳng vào được. Cần thêm **đầu chuyển IEC C14 → ổ cắm 3 chân**
-(~30k) hoặc **ổ chia/PDU có đầu vào IEC**.
-
-## Cổng EPO — đọc trước khi chạm vào
-
-**EPO = Emergency Power Off**, cắt điện khẩn cấp từ xa. Manual mục 2-2 Step 5:
-
-> *Keep the pin 1 and pin 2 closed for UPS normal operation. To activate EPO function,
-> cut the wire between pin 1 and pin 2.*
-
-Đây là mạch **thường ĐÓNG**: có cầu nối giữa chân 1 và 2 thì UPS chạy bình thường.
-**Ngắt mạch đó → UPS cắt toàn bộ đầu ra ngay lập tức.**
-
-Công dụng thiết kế: đấu ra nút đỏ khẩn cấp cạnh cửa phòng máy, để cắt sạch điện trong
-một cú bấm.
-
-> ⚠️ Vì là mạch thường-đóng, **jumper lỏng hoặc rơi ra = mất điện toàn bộ ngay tức khắc**.
-> Kiểm tra cầu nối có cắm chắc không, và đừng rút ra thử.
-
-Dấu hiệu EPO bị kích hoạt (manual mục 3-8):
-
-| Mã trên LCD | Tiếng còi | Xử lý |
-|---|---|---|
-| `E.P` | mỗi giây một tiếng | Nối lại mạch chân 1–2 |
-
-EPO **không** được đưa vào hệ giám sát: nó là mạch cứng, không đọc được qua serial, và
-can thiệp vào đó chỉ thêm rủi ro.
-
----
-
-# Đấu nối ESP32-C3 Super Mini
-
-## Vì sao C3 cần cấu hình riêng
-
-| | ESP32 thường | **ESP32-C3** |
-|---|---|---|
-| UART | UART0/1/**2** | **chỉ UART0/1** — `HardwareSerial(2)` không tồn tại |
-| GPIO16/17 | có | **không có** |
-| Serial monitor | qua chip CH340 | **USB CDC gốc**, cần `ARDUINO_USB_CDC_ON_BOOT=1` |
-
-Cả ba đã xử lý trong `platformio.ini` bằng hai env riêng. Đổi board không phải sửa code.
-
-## Sơ đồ đấu
+## Đấu nối
 
 ```
                 ESP32-C3 Super Mini          Module MAX3232
@@ -1019,42 +45,256 @@ Cả ba đã xử lý trong `platformio.ini` bằng hai env riêng. Đổi board
                                                           UPS · cổng RS-232
 ```
 
-| MAX3232 | ESP32-C3 | Ghi chú |
+| MAX3232 | ESP32-C3 | |
 |---|---|---|
-| `VCC` | **`3V3`** | **KHÔNG cắm 5V** — sẽ đưa 5V vào chân GPIO của C3 |
+| `VCC` | **`3V3`** | **đừng cắm 5V** — sẽ đưa 5V vào chân GPIO |
 | `GND` | `GND` | |
 | `TXD` | `GPIO4` | dữ liệu từ UPS về |
 | `RXD` | `GPIO5` | lệnh gửi sang UPS |
 
-GPIO4 và GPIO5 chọn có chủ ý: **tránh GPIO2/8/9** vì là chân strapping (GPIO8 còn là LED
-onboard, GPIO9 là nút BOOT) — dùng nhầm có thể làm board không khởi động được.
+GPIO4/GPIO5 chọn có chủ ý: **tránh GPIO2, GPIO8, GPIO9** vì là chân strapping trên C3 —
+GPIO8 còn là LED onboard, GPIO9 là nút BOOT.
 
-## Thử lần đầu
+## ⚠️ Ba điểm dễ hỏng
 
-**Bước 1 — RÚT cáp USB khỏi UPS.** Bắt buộc. USB và RS-232 không dùng cùng lúc.
+**USB và RS-232 không dùng cùng lúc.** Manual ghi rõ: *"USB port and RS-232 port can't
+work at the same time"*. Còn cắm cáp USB thì cổng RS-232 im lặng hoàn toàn.
 
-**Bước 2 — nạp firmware.** Chưa cần điền WiFi/MQTT: phần dò baud chạy **trước** khi kết
-nối WiFi, nên thử được đường RS-232 trước rồi mới lo phần mạng.
+**Nguồn phải lấy từ dãy `OUTPUT`, không phải `P1`.** Ổ P1 bị UPS tự ngắt sau vài phút
+chạy pin — ESP32 sẽ chết đúng lúc cần nó nhất.
+
+**Nhãn TXD/RXD trên module MAX3232 không thống nhất giữa các hãng.** Nếu không nhận được
+dữ liệu, đảo `tx_pin` ↔ `rx_pin` trong YAML rồi nạp lại. Vô hại, không cháy gì.
+
+---
+
+# 2. Nạp firmware
 
 ```bash
-cd firmware/src && cp config.example.h config.h && cd ..
-pio run -e esp32c3 -t upload
-pio device monitor
+cd esphome
+cp secrets.yaml.example secrets.yaml     # rồi điền WiFi
+esphome run ups-vertiv.yaml              # lần đầu qua USB
 ```
 
-**Bước 3 — đọc log.** Thành công sẽ ra:
+Sau lần đầu, **cập nhật qua OTA**: `esphome run ups-vertiv.yaml` sẽ tự tìm thiết bị trên
+mạng, không cần cắm dây.
 
+Thiết bị dùng `api:` native của ESPHome nên HA **tự phát hiện** — vào
+*Cài đặt → Thiết bị & Dịch vụ*, ESPHome sẽ đề xuất thêm `ups-vertiv`.
+
+## Nếu không nhận được dữ liệu
+
+Log sẽ báo `Khong co phan hoi cho 'QMOD'`. Thử theo thứ tự:
+
+1. **Đã rút cáp USB khỏi UPS chưa** — nguyên nhân phổ biến nhất
+2. **Đảo `tx_pin` ↔ `rx_pin`** trong `ups-vertiv.yaml`
+3. **Đổi `baud_rate`**: manual không ghi tốc độ. Mặc định `2400` là chuẩn Megatec phổ
+   biến nhất; thử lần lượt `9600` → `1200` → `4800` → `19200`. Mỗi lần chỉ cần OTA.
+4. Đổi cáp null-modem sang đầu đổi giới tính thẳng
+5. Kiểm `VCC` có đúng 3.3V
+
+## Vì sao ESP32-C3 cần cấu hình riêng
+
+| | ESP32 thường | **ESP32-C3** |
+|---|---|---|
+| UART | UART0/1/**2** | **chỉ UART0/1** |
+| GPIO16/17 | có | **không có** |
+| Serial monitor | qua chip CH340 | **USB CDC gốc** |
+
+---
+
+# 3. Cài panel vào Home Assistant
+
+Repo này là **HACS integration**. Cài xong tự dựng mục **UPS** trên thanh bên tại `/ups`.
+
+1. HACS → ⋮ → **Custom repositories** → dán URL repo, Kiểu = **Bộ tích hợp**
+2. Tìm **UPS Vertiv GXT Panel** → Download → **khởi động lại HA**
+3. *Cài đặt → Thiết bị & Dịch vụ → Thêm tích hợp* → **UPS Vertiv** → Submit
+
+Panel có 3 tab:
+
+| Tab | Nội dung |
+|---|---|
+| **Thông tin** | Sơ đồ dòng điện, thanh pin, thông số, trạng thái ổ P1 |
+| **Nhật ký** | Lịch sử mất điện — dựng lại từ **recorder của HA**, không cần bộ nhớ riêng |
+| **Cài đặt** | Bật/tắt cảnh báo, chọn điện thoại nhận thông báo, nút Gửi thử |
+
+Card cũng dùng được ở dashboard khác mà không phải khai báo resource:
+
+```yaml
+type: custom:ups-panel-card
 ```
-[ups] thu   2400 baud ... CO PHAN HOI: (244.5 50.2 229.9 ...
-[ups] DA CHOT 2400 baud, luu vao NVS
-```
 
-Nếu **mọi** tốc độ đều im lặng, firmware in sẵn danh sách cần kiểm. Thử theo thứ tự:
+Card **tự dò tiền tố entity** (tìm entity kết thúc bằng `_output_current`) nên chạy được
+kể cả khi bạn đổi tên thiết bị ESPHome.
 
-1. Cáp USB còn cắm ở UPS không
-2. **Đảo `UPS_RX_PIN` ↔ `UPS_TX_PIN`** trong `platformio.ini` rồi nạp lại — nhãn TXD/RXD
-   trên module MAX3232 không thống nhất giữa các hãng. Vô hại.
-3. Đổi sang đầu đổi giới tính thẳng thay cho cáp null-modem
-4. Kiểm lại `VCC` có đúng 3.3V không
+## Cảnh báo mất điện
 
-**Bước 4** — chạy được rồi thì điền WiFi/MQTT vào `config.h` và nạp lại.
+Panel → tab **Cài đặt** → chọn `notify.mobile_app_…` → **Lưu**. Bấm **Gửi thử** để kiểm
+tra ngay, không phải chờ mất điện thật.
+
+Báo 5 tình huống: mất điện · pin dưới ngưỡng cảnh báo · pin dưới ngưỡng nguy cấp ·
+UPS ngắt ổ P1 · có điện lại.
+
+Engine chạy nền trong integration, bám `async_track_state_change_event` nên phản ứng tức
+thì. Cảnh báo pin chỉ bắn **một lần cho mỗi lần mất điện**, reset khi có điện lại.
+
+---
+
+# 4. Giao thức — kết quả dò thực tế
+
+Phần này là kiến thức lõi, đã đo và kiểm chứng trên chính máy này.
+
+## Thiết bị
+
+| Mục | Giá trị |
+|---|---|
+| Model UPS tự báo (`QMD`) | `G3K` — 3000VA, PF 0.80 → **2400W**, 1 pha/1 pha, 230V/230V |
+| Firmware (`QVFW`) | `VERFW:00072.07` |
+| Định mức (`QRI`) | 230.0V, 13A, battery 72.0V, 50.0Hz |
+| Cấu hình bình | 6 bình × 12V = 72V danh định |
+
+## Giao thức **Voltronic PI01**
+
+`QPI` → `(PI01`. **KHÔNG phải Megatec/Q1 đời cũ** — `Q1` và `QS` đều trả `(NAK`.
+
+- Lệnh là ASCII thuần + `CR`, **KHÔNG kèm CRC** (kèm CRC bị trả `NAK`)
+- Phản hồi bắt đầu bằng `(` và kết thúc bằng `CR`
+- **`(ACK`** = lệnh ghi được chấp nhận · **`(NAK`** = bị từ chối, không có tác dụng
+
+> `(NAK` **không tuyệt đối tin được**: đã bắt được `QFLAG` (lệnh đọc hợp lệ) trả `(NAK`
+> một lần trong 12 lần đọc. Đừng kết luận "lệnh không được hỗ trợ" chỉ từ một lần NAK.
+
+## Lệnh chỉ-đọc đã kiểm chứng
+
+| Lệnh | Phản hồi mẫu | Ý nghĩa |
+|---|---|---|
+| `QMOD` | `(L` | Chế độ hiện tại |
+| `QGS` | `(244.5 50.2 229.9 50.2 000.8 006 373.3 374.3 082.0 ---.- 026.4 100000000001` | Trạng thái tổng hợp |
+| `QBV` | `(082.0 06 01 100 102` | Battery: V, số bình, số pack, %, số phút còn lại |
+| `QWS` | `(0000…0` (64 số 0) | Cờ cảnh báo — toàn 0 = không lỗi |
+| `QSK1` | `(1` / `(0` | Ổ cắm lập trình P1 |
+| `QFLAG` | `(EpbrahczDovegfjlm` | Cờ bật (sau `E`) / tắt (sau `D`) |
+| `QMD` | `(############G3K ###3000 80 1/1 230 230 06 12.0` | Thông tin model |
+
+Không hỗ trợ: `QPIRI`, `QPIGS`, `QPGS0`, `QPRI`, `QBDR`, `PEa`/`PDa` — đều `(NAK`.
+
+**Bố cục `QGS`:** `InV · InHz · OutV · OutHz · OutA · Load% · BUS+ · BUS− · BattV ·
+BattCell · TempC · StatusBits`
+
+**Bố cục `QBV`:** `BattV · SốBình · SốPackSongSong · Dung lượng% · Số phút backup`
+
+## Bảng mã `QMOD`
+
+| Mã | Alias | Hiển thị trên panel |
+|---|---|---|
+| `L` | `Line` | Điện lưới |
+| `B` | `Battery` | Chạy pin |
+| `Y` | `Bypass` | Chạy bypass |
+| `F` | `Fault` | Lỗi UPS |
+| `E` | `ECO` | Tiết kiệm điện |
+| `C` | `Converter` | Chuyển đổi tần số |
+| `S` | `Standby` | Chờ |
+| `P` | `PowerOn` | Đang khởi động |
+| `T` | `BatteryTest` | Đang kiểm tra pin |
+| `D` | `Shutdown` | Đang tắt |
+
+Firmware chỉ đẩy **alias tiếng Anh**; phần chữ tiếng Việt nằm trong `ups-panel-card.js`.
+Muốn đổi câu chữ chỉ sửa một chỗ, **không phải nạp lại firmware**.
+
+## ⚠️ Lệnh nguy hiểm — tuyệt đối không gửi
+
+- `T` / `T<nn>` — kích hoạt battery test (chuyển tải sang pin)
+- `S<nn>` / `S<nn>R<mmmm>` — **hẹn giờ TẮT UPS**, cắt điện toàn bộ tải
+
+## Độ phân giải phần trăm pin: **bước 1%**
+
+Đo trong lần xả pin thật: `098 → 097 → 096 → …`. Không phải bước 25%.
+
+**Nhưng số phút dự phòng thì nhiễu rất nặng** — đo được `96 → 192 → 200 → 215 → 194 → 96`
+giữa các lần đọc cách nhau 1.2 giây, kể cả khi đang chạy pin. Dùng nó để tham khảo,
+đừng dùng làm chốt chặn duy nhất.
+
+---
+
+# 5. Ổ cắm lập trình P1
+
+Mặt sau UPS có **hai dãy ổ**:
+
+| Dãy | Nhãn | Hành vi |
+|---|---|---|
+| Trái | `OUTPUT` | **Luôn có điện** khi UPS chạy |
+| Phải | `PROGRAMMABLE OUTLETS (P1)` | **Tự ngắt sau một khoảng chạy pin** |
+
+Điều khiển trong menu LCD (giữ **`SELECT`** 5 giây khi UPS ở standby hoặc bypass):
+
+| Mã | Mục | Giá trị |
+|---|---|---|
+| **06** | Programmable outlets enable/disable | ENA / DIS |
+| **07** | Programmable outlets setting | **0–999 phút** |
+
+Mục **07** chính là bộ đếm quyết định khi nào ổ P1 bị cắt.
+
+> **KHÔNG cắm máy tính, NAS, hay ESP32 vào P1.** Đã từng có sự cố: PC cắm ở P1 bị cắt
+> điện đột ngột giữa lúc test.
+
+Lệnh serial (đã kiểm chứng): `QSK1` đọc trạng thái, **`SKON1`** bật (trả `(ACK`),
+`SKOFF1` tắt. Panel hiện tại **chỉ đọc**, không điều khiển.
+
+---
+
+# 6. Còi báo — không điều khiển được qua serial
+
+Manual mục 3-1:
+
+> *Mute the alarm: When the UPS is on battery mode, press and hold this button for at
+> least 5 seconds to disable or enable the alarm system.*
+
+Đây là **toggle vật lý trên nút `ON/MUTE`**, và **chỉ tác dụng khi đang chạy pin**.
+Manual không liệt kê lệnh serial nào cho còi báo; thực nghiệm cũng khớp — `PEa`/`PDa`
+trả `(NAK` 21/21 lần trong khi `SKON1` trả `(ACK` cùng phiên.
+
+**Bật lại còi:** rút điện lưới → giữ `ON/MUTE` 5 giây → kiểm biểu tượng mute trên LCD
+đã biến mất → cắm điện lại.
+
+---
+
+# 7. Cổng EPO — đọc trước khi chạm vào
+
+**EPO = Emergency Power Off**. Manual mục 2-2 Step 5:
+
+> *Keep the pin 1 and pin 2 closed for UPS normal operation. To activate EPO function,
+> cut the wire between pin 1 and pin 2.*
+
+Mạch **thường ĐÓNG**: có cầu nối chân 1–2 thì UPS chạy bình thường.
+**Ngắt mạch đó → UPS cắt toàn bộ đầu ra ngay lập tức.**
+
+> ⚠️ Vì là mạch thường-đóng, **jumper lỏng hoặc rơi ra = mất điện toàn bộ tức khắc**.
+> Kiểm tra cầu nối có cắm chắc không, đừng rút ra thử.
+
+| Mã trên LCD | Tiếng còi | Xử lý |
+|---|---|---|
+| `E.P` | mỗi giây một tiếng | Nối lại mạch chân 1–2 |
+
+EPO không đưa vào hệ giám sát: là mạch cứng, không đọc được qua serial.
+
+---
+
+# 8. Hai cổng "IN"/"OUT" — không phải RS485
+
+Manual mục 2-1 hạng mục 5: **"Network/Fax/Modem surge protection"**. Chỉ là đường chống
+sét đi xuyên qua, **không mang dữ liệu gì của UPS**.
+
+Cổng giao tiếp thật: **USB** (7), **RS-232** (8), **SNMP intelligent slot** (9).
+
+---
+
+# 9. Đã gỡ bỏ
+
+Phiên bản trước đọc UPS bằng agent PowerShell trên máy Windows qua USB-HID rồi đẩy MQTT.
+Toàn bộ phần đó **đã xoá** vì máy tính không chạy 24/7 — và tệ hơn, đúng lúc mất điện lâu
+thì máy tự tắt, mất khả năng theo dõi ở thời điểm cần nhất.
+
+> **Khoảng trống còn lại:** tính năng **tự tắt máy tính an toàn khi sắp hết pin** đã mất
+> theo. ESP32 chỉ đọc UPS, không tắt được máy tính. Cần lấp lại bằng automation trong HA
+> (gọi lệnh tắt qua SSH, hoặc agent nhỏ nghe HA) — **chưa làm**.
