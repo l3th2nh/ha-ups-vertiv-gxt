@@ -59,6 +59,12 @@ external_components:
 # ---------------------------------------------------------------------------
 uart:
   id: ups_uart
+  # Tro ve dung so do trong README (MAX3232 TXD -> GPIO4, RXD -> GPIO5).
+  # Da thu ca hai chieu, ket qua deu chi ve mot nguyen nhan chung:
+  #   tx=5 rx=4 -> RX tha noi   (toan byte 00 xen lan FF/01)
+  #   tx=4 rx=5 -> vong lai NGAY (0-1ms, khong the di qua day o 2400 baud)
+  # Chip MAX3232 KHONG duoc cap nguon se cho dung hai hien tuong nay:
+  # dau ra TTL tha noi, va cac chan dan nhau qua diode bao ve ESD.
   tx_pin: GPIO5
   rx_pin: GPIO4
   baud_rate: 2400

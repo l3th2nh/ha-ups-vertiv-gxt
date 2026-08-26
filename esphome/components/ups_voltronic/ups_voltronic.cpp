@@ -96,8 +96,21 @@ void UpsVoltronic::loop() {
 
   // Het gio cho phan hoi -> bo qua lenh nay, di tiep
   if (millis() - this->step_started_ > STEP_TIMEOUT_MS) {
-    ESP_LOGW(TAG, "Khong co phan hoi cho '%s' (thu kiem baud / dao chan TX-RX)",
-             STEP_CMD[this->step_]);
+    if (this->buf_len_ > 0) {
+      // CO byte ve nhung khong ra khung hop le -> gan nhu chac chan SAI BAUD.
+      // In ra hex de nhin duoc rac, thay vi chi bao "khong co phan hoi".
+      char hex[3 * 24 + 1];
+      int n = this->buf_len_ < 24 ? this->buf_len_ : 24;
+      for (int i = 0; i < n; i++) sprintf(hex + i * 3, "%02X ", (uint8_t) this->buf_[i]);
+      hex[n * 3] = 0;   // ket thuc chuoi, khong can escape
+      ESP_LOGW(TAG, "'%s': nhan %u byte nhung khong thanh khung -> SAI BAUD. Hex: %s",
+               STEP_CMD[this->step_], (unsigned) this->buf_len_, hex);
+    } else {
+      // KHONG co byte nao -> van de o duong day, khong phai baud
+      ESP_LOGW(TAG, "'%s': KHONG nhan duoc byte nao -> loi duong day "
+                    "(dao tx_pin/rx_pin, kiem cap null-modem, VCC 3.3V)",
+               STEP_CMD[this->step_]);
+    }
     Step next = static_cast<Step>(this->step_ + 1);
     if (next >= STEP_DONE) {
       this->publish_all_();
