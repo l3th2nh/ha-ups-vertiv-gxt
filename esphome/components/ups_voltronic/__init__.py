@@ -36,6 +36,7 @@ UpsVoltronic = ups_voltronic_ns.class_(
 )
 
 CONF_RATED_WATTS = "rated_watts"
+CONF_AUTO_BAUD = "auto_baud"
 
 # key trong YAML -> (ham setter trong C++, schema)
 NUMERIC_SENSORS = {
@@ -163,6 +164,9 @@ _schema = {
     cv.GenerateID(): cv.declare_id(UpsVoltronic),
     # 3000 VA x PF 0.80 = 2400 W (lay tu QMD cua chinh may GXT-3000MTPLUS230)
     cv.Optional(CONF_RATED_WATTS, default=2400.0): cv.positive_float,
+    # Manual cua UPS khong ghi toc do baud -> de thiet bi tu quet.
+    # Tat khi da biet chac toc do, de khoi doi lung tung luc UPS tam im.
+    cv.Optional(CONF_AUTO_BAUD, default=True): cv.boolean,
 }
 for _key, (_setter, _sch) in {**NUMERIC_SENSORS, **BINARY_SENSORS, **TEXT_SENSORS}.items():
     _schema[cv.Optional(_key)] = _sch
@@ -180,6 +184,7 @@ async def to_code(config):
     await uart.register_uart_device(var, config)
 
     cg.add(var.set_rated_watts(config[CONF_RATED_WATTS]))
+    cg.add(var.set_auto_baud(config[CONF_AUTO_BAUD]))
 
     for key, (setter, _) in NUMERIC_SENSORS.items():
         if key in config:

@@ -55,6 +55,49 @@ Thiết bị chạy 24/7 và độc lập với máy tính, nên không có lỗ
 GPIO4/GPIO5 chọn có chủ ý: **tránh GPIO2, GPIO8, GPIO9** vì là chân strapping trên C3 —
 GPIO8 còn là LED onboard, GPIO9 là nút BOOT.
 
+## ⚠️ Cổng RS-232 của UPS dùng chân PHI TIÊU CHUẨN
+
+Đây là điểm quan trọng nhất của cả dự án, và không có trong bất kỳ manual nào của Vertiv.
+
+Đặc tả giao thức Megatec quy định sơ đồ chân DB9 **khác hẳn** cổng COM máy tính:
+
+```
+COMPUTER           UPS
+==========================
+   RX    <---  TX  (pin 9)
+   TX     --->  RX  (pin 6)
+   GND   <---  GND (pin 7)
+```
+
+Cổng COM tiêu chuẩn (và mọi module MAX3232 bán sẵn) dùng **chân 2, 3, 5**.
+UPS dùng **chân 9, 6, 7**.
+
+**Hệ quả: không một sợi cáp DB9 bán sẵn nào chạy được** — cả cáp thẳng lẫn cáp
+null-modem chéo 2-3 đều nối vào những chân mà UPS không dùng.
+
+### Phải tự làm cáp
+
+| UPS (DB9) | → | Module MAX3232 (DB9) |
+|---|---|---|
+| chân **9** (UPS phát) | → | chân **2** (module thu) |
+| chân **6** (UPS thu) | ← | chân **3** (module phát) |
+| chân **7** (GND) | ↔ | chân **5** (GND) |
+
+Cách làm không cần hàn chân DB9: mua **2 đầu chuyển DB9 đực ra terminal vít**
+(khoảng 25–30k mỗi cái), cắm một cái vào UPS, một cái vào module, rồi nối 3 dây
+giữa hai cầu đấu theo bảng trên.
+
+### Tham số cổng (theo đặc tả Megatec)
+
+| Mục | Giá trị |
+|---|---|
+| Baud | **2400** |
+| Data bits | 8 |
+| Parity | None |
+| Stop bits | 1 |
+
+Nguồn: [Megatec protocol — Network UPS Tools](https://www.networkupstools.org/protocols/megatec.html)
+
 ## ⚠️ Ba điểm dễ hỏng
 
 **USB và RS-232 không dùng cùng lúc.** Manual ghi rõ: *"USB port and RS-232 port can't

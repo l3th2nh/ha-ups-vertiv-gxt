@@ -41,6 +41,7 @@ class UpsVoltronic : public PollingComponent, public uart::UARTDevice {
   float get_setup_priority() const override { return setup_priority::DATA; }
 
   void set_rated_watts(float w) { this->rated_watts_ = w; }
+  void set_auto_baud(bool on) { this->auto_baud_ = on; }
 
 #ifdef USE_SENSOR
   void set_battery_level(sensor::Sensor *s) { battery_level_ = s; }
@@ -69,12 +70,21 @@ class UpsVoltronic : public PollingComponent, public uart::UARTDevice {
   enum Step : uint8_t { STEP_QMOD = 0, STEP_QGS, STEP_QBV, STEP_QWS, STEP_QSK1, STEP_DONE };
 
   void start_step_(Step s);
+  void try_next_baud_();
   void send_(const char *cmd);
   void handle_reply_(Step s, const char *reply);
   void publish_all_();
   static const char *mode_alias_(char mode);
 
   float rated_watts_{2400.0f};
+
+  // Tu quet toc do baud: manual cua UPS khong ghi toc do, nen thay vi nap lai
+  // firmware cho tung toc do, de thiet bi tu doi va thu. Chot lai khi nhan duoc
+  // mot khung hop le (bat dau bang '(').
+  bool     auto_baud_{true};
+  bool     baud_locked_{false};
+  uint8_t  baud_index_{0};
+  uint8_t  fail_rounds_{0};
 
   bool     running_{false};
   Step     step_{STEP_DONE};

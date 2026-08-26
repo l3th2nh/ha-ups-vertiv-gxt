@@ -14,6 +14,14 @@ static const uint32_t STEP_TIMEOUT_MS = 1500;
 
 static const char *const STEP_CMD[] = {"QMOD", "QGS", "QBV", "QWS", "QSK1"};
 
+// Manual cua UPS khong ghi toc do baud. Thay vi nap lai firmware cho tung toc
+// do, thiet bi tu doi va thu. 2400 dat truoc vi la chuan Megatec pho bien nhat.
+static const uint32_t BAUD_CANDIDATES[] = {2400, 9600, 1200, 4800, 19200, 38400};
+static const uint8_t  BAUD_COUNT = sizeof(BAUD_CANDIDATES) / sizeof(uint32_t);
+
+// So vong doc that bai lien tiep truoc khi doi sang toc do ke tiep
+static const uint8_t FAIL_ROUNDS_BEFORE_SWITCH = 2;
+
 const char *UpsVoltronic::mode_alias_(char mode) {
   switch (mode) {
     case 'P': return "PowerOn";
@@ -40,7 +48,16 @@ void UpsVoltronic::dump_config() {
   ESP_LOGCONFIG(TAG, "UPS Voltronic (giao thuc PI01 qua RS-232):");
   ESP_LOGCONFIG(TAG, "  Cong suat dinh muc: %.0f W", this->rated_watts_);
   LOG_UPDATE_INTERVAL(this);
-  this->check_uart_settings(2400);   // canh bao neu baud khac khuyen nghi
+  ESP_LOGCONFIG(TAG, "  Tu quet baud: %s", this->auto_baud_ ? "BAT" : "TAT");
+}
+
+void UpsVoltronic::try_next_baud_() {
+  this->baud_index_ = (this->baud_index_ + 1) % BAUD_COUNT;
+  uint32_t b = BAUD_CANDIDATES[this->baud_index_];
+  this->parent_->set_baud_rate(b);
+  this->parent_->load_settings(false);   // ap dung ngay, khong in lai cau hinh
+  this->fail_rounds_ = 0;
+  ESP_LOGW(TAG, "Khong co phan hoi -> doi sang %u baud", (unsigned) b);
 }
 
 void UpsVoltronic::send_(const char *cmd) {
@@ -141,6 +158,13 @@ void UpsVoltronic::handle_reply_(Step s, const char *reply) {
     ESP_LOGW(TAG, "'%s' tra ve khong hop le: '%s'", STEP_CMD[s], reply);
     return;
   }
+  // Nhan duoc mot khung bat dau bang '(' nghia la toc do dang dung
+  if (this->auto_baud_ && !this->baud_locked_) {
+    this->baud_locked_ = true;
+    ESP_LOGI(TAG, "DA CHOT %u baud - UPS tra loi hop le",
+             (unsigned) BAUD_CANDIDATES[this->baud_index_]);
+  }
+
   if (strncmp(reply, "(NAK", 4) == 0) {
     ESP_LOGD(TAG, "'%s' bi tu choi (NAK) - firmware UPS khong ho tro lenh nay",
              STEP_CMD[s]);
@@ -207,8 +231,12 @@ void UpsVoltronic::handle_reply_(Step s, const char *reply) {
 void UpsVoltronic::publish_all_() {
   if (!this->got_qgs_ && !this->got_qbv_) {
     ESP_LOGW(TAG, "Khong doc duoc gi trong vong nay - bo qua, khong day so cu len HA");
+    if (this->auto_baud_ && !this->baud_locked_) {
+      if (++this->fail_rounds_ >= FAIL_ROUNDS_BEFORE_SWITCH) this->try_next_baud_();
+    }
     return;
   }
+  this->fail_rounds_ = 0;
 
 #ifdef USE_SENSOR
   if (this->got_qgs_) {

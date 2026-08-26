@@ -1,4 +1,4 @@
-# Firmware doc UPS Vertiv/Liebert GXT-3000MTPLUS230 qua RS-232.
+﻿# Firmware doc UPS Vertiv/Liebert GXT-3000MTPLUS230 qua RS-232.
 # ESP32-C3 Super Mini + module MAX3232. Nap lan dau qua USB; sau do OTA qua WiFi.
 #
 # DAU NOI
@@ -70,7 +70,7 @@ uart:
   # dau ra TTL tha noi, va cac chan dan nhau qua diode bao ve ESD.
   tx_pin: GPIO5
   rx_pin: GPIO4
-  baud_rate: 2400
+  baud_rate: 2400        # diem xuat phat; firmware tu quet neu khong co phan hoi
   data_bits: 8
   parity: NONE
   stop_bits: 1
