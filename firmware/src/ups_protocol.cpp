@@ -1,8 +1,9 @@
 #include "ups_protocol.h"
 #include "config.h"
 
-// UART2 cua ESP32 -> module MAX3232
-static HardwareSerial UpsSerial(2);
+// UART noi toi module MAX3232. So hieu UART do platformio.ini quyet dinh:
+// ESP32-C3 chi co UART0/1 nen KHONG dung duoc UART2 nhu ESP32 co dien.
+static HardwareSerial UpsSerial(UPS_UART_NUM);
 
 // 2400 dat truoc: chuan Megatec/Voltronic pho bien nhat
 const uint32_t UPS_BAUD_CANDIDATES[]   = { 2400, 9600, 1200, 4800, 19200, 38400 };

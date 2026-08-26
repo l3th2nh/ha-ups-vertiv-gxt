@@ -987,3 +987,74 @@ Dấu hiệu EPO bị kích hoạt (manual mục 3-8):
 
 EPO **không** được đưa vào hệ giám sát: nó là mạch cứng, không đọc được qua serial, và
 can thiệp vào đó chỉ thêm rủi ro.
+
+---
+
+# Đấu nối ESP32-C3 Super Mini
+
+## Vì sao C3 cần cấu hình riêng
+
+| | ESP32 thường | **ESP32-C3** |
+|---|---|---|
+| UART | UART0/1/**2** | **chỉ UART0/1** — `HardwareSerial(2)` không tồn tại |
+| GPIO16/17 | có | **không có** |
+| Serial monitor | qua chip CH340 | **USB CDC gốc**, cần `ARDUINO_USB_CDC_ON_BOOT=1` |
+
+Cả ba đã xử lý trong `platformio.ini` bằng hai env riêng. Đổi board không phải sửa code.
+
+## Sơ đồ đấu
+
+```
+                ESP32-C3 Super Mini          Module MAX3232
+                ┌──────────────┐             ┌─────────────┐
+   USB 5V ─────►│ USB-C        │             │             │
+                │          3V3 ├────────────►│ VCC         │
+                │          GND ├────────────►│ GND         │      ┌───────┐
+                │       GPIO4  │◄────────────┤ TXD         │      │  DB9  │
+                │       GPIO5  ├────────────►│ RXD         │      │ (cái) │
+                └──────────────┘             └─────────────┴──────┴───┬───┘
+                                                                      │
+                                              cáp null-modem đực–đực  │
+                                                                      ▼
+                                                          UPS · cổng RS-232
+```
+
+| MAX3232 | ESP32-C3 | Ghi chú |
+|---|---|---|
+| `VCC` | **`3V3`** | **KHÔNG cắm 5V** — sẽ đưa 5V vào chân GPIO của C3 |
+| `GND` | `GND` | |
+| `TXD` | `GPIO4` | dữ liệu từ UPS về |
+| `RXD` | `GPIO5` | lệnh gửi sang UPS |
+
+GPIO4 và GPIO5 chọn có chủ ý: **tránh GPIO2/8/9** vì là chân strapping (GPIO8 còn là LED
+onboard, GPIO9 là nút BOOT) — dùng nhầm có thể làm board không khởi động được.
+
+## Thử lần đầu
+
+**Bước 1 — RÚT cáp USB khỏi UPS.** Bắt buộc. USB và RS-232 không dùng cùng lúc.
+
+**Bước 2 — nạp firmware.** Chưa cần điền WiFi/MQTT: phần dò baud chạy **trước** khi kết
+nối WiFi, nên thử được đường RS-232 trước rồi mới lo phần mạng.
+
+```bash
+cd firmware/src && cp config.example.h config.h && cd ..
+pio run -e esp32c3 -t upload
+pio device monitor
+```
+
+**Bước 3 — đọc log.** Thành công sẽ ra:
+
+```
+[ups] thu   2400 baud ... CO PHAN HOI: (244.5 50.2 229.9 ...
+[ups] DA CHOT 2400 baud, luu vao NVS
+```
+
+Nếu **mọi** tốc độ đều im lặng, firmware in sẵn danh sách cần kiểm. Thử theo thứ tự:
+
+1. Cáp USB còn cắm ở UPS không
+2. **Đảo `UPS_RX_PIN` ↔ `UPS_TX_PIN`** trong `platformio.ini` rồi nạp lại — nhãn TXD/RXD
+   trên module MAX3232 không thống nhất giữa các hãng. Vô hại.
+3. Đổi sang đầu đổi giới tính thẳng thay cho cáp null-modem
+4. Kiểm lại `VCC` có đúng 3.3V không
+
+**Bước 4** — chạy được rồi thì điền WiFi/MQTT vào `config.h` và nạp lại.

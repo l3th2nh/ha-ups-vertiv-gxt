@@ -24,20 +24,24 @@
 #define DEVICE_MAKER    "Vertiv / Liebert"
 
 // ------------------------------------------------------------- RS-232 UPS ---
-// !!! CHUA KIEM CHUNG TREN MAY THAT !!!
-// Manual khong ghi toc do baud. 2400 la chuan Megatec/Voltronic pho bien nhat.
-// Chay Test-UpsSerial.ps1 tren PC de do, roi sua dung so o day.
-#define UPS_BAUD        2400
+// UART va chan GPIO do platformio.ini quyet dinh theo tung board, vi ESP32-C3
+// KHONG co UART2 va cung khong co GPIO16/17. Xem build_flags trong env tuong ung.
+//   ESP32-C3 Super Mini : UART1, RX=GPIO4,  TX=GPIO5
+//   ESP32 WROOM-32      : UART2, RX=GPIO16, TX=GPIO17
+// Muon doi chan thi sua platformio.ini, khong sua o day.
+#ifndef UPS_UART_NUM
+  #define UPS_UART_NUM 1
+#endif
+#ifndef UPS_RX_PIN
+  #define UPS_RX_PIN 4
+#endif
+#ifndef UPS_TX_PIN
+  #define UPS_TX_PIN 5
+#endif
 
-// Chan noi toi module MAX3232. Doi neu ban dau day khac.
-//   MAX3232 VCC -> ESP32 3V3   (KHONG phai 5V)
-//   MAX3232 GND -> ESP32 GND
-//   MAX3232 TXD -> UPS_RX_PIN
-//   MAX3232 RXD -> UPS_TX_PIN
-// Nhan TXD/RXD tren module re tien khong thong nhat giua cac hang.
-// Neu khong nhan duoc du lieu: DAO hai chan nay.
-#define UPS_RX_PIN      16
-#define UPS_TX_PIN      17
+// Toc do baud: firmware TU DO luc khoi dong roi luu vao NVS, nen gia tri nay
+// chi la diem xuat phat khi chua do duoc gi.
+#define UPS_BAUD 2400
 
 // --------------------------------------------------------------- Chu ky ---
 #define POLL_NORMAL_MS       15000   // dang chay dien luoi
