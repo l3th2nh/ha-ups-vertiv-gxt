@@ -19,3 +19,4 @@ esphome/boot*.log
 esphome/boot*.err
 __pycache__/
 *.pyc
+docs/photos/
