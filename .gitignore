@@ -15,3 +15,7 @@ docs/manual.txt
 esphome/compile.log
 esphome/secrets.yaml
 esphome/.esphome/
+esphome/boot*.log
+esphome/boot*.err
+__pycache__/
+*.pyc

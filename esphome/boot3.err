@@ -1,6 +1,0 @@
-INFO ESPHome 2026.7.4
-INFO Loaded validated config cache for ups-vertiv.yaml, skipping validation.
-INFO Starting log output from 192.168.0.2 using esphome API
-INFO Successfully resolved ups-vertiv @ 192.168.0.2 in 0.001s
-INFO Successfully connected to ups-vertiv @ 192.168.0.2 in 0.012s
-INFO Successful handshake with ups-vertiv @ 192.168.0.2 in 0.038s
