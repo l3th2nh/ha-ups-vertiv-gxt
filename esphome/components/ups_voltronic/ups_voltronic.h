@@ -42,6 +42,9 @@ class UpsVoltronic : public PollingComponent, public uart::UARTDevice {
 
   void set_rated_watts(float w) { this->rated_watts_ = w; }
   void set_auto_baud(bool on) { this->auto_baud_ = on; }
+  // Nhip hoi RIENG cho QMOD. QMOD chi tra ve 3 byte nen hoi day duoc ma van
+  // nhe hon nhieu so voi ca bo lenh -> bat mat dien nhanh hon han.
+  void set_mode_interval(uint32_t ms) { this->mode_interval_ = ms; }
 
 #ifdef USE_SENSOR
   void set_battery_level(sensor::Sensor *s) { battery_level_ = s; }
@@ -74,6 +77,8 @@ class UpsVoltronic : public PollingComponent, public uart::UARTDevice {
   void send_(const char *cmd);
   void handle_reply_(Step s, const char *reply);
   void publish_all_();
+  void publish_mode_();     // chi day status + on_battery (vong hoi nhanh)
+  void finish_round_();
   static const char *mode_alias_(char mode);
 
   float rated_watts_{2400.0f};
@@ -85,6 +90,12 @@ class UpsVoltronic : public PollingComponent, public uart::UARTDevice {
   bool     baud_locked_{false};
   uint8_t  baud_index_{0};
   uint8_t  fail_rounds_{0};
+
+  uint32_t mode_interval_{1000};
+  uint32_t last_mode_poll_{0};
+  bool     mode_only_{false};
+  bool     got_mode_{false};
+  char     last_pub_mode_{0};   // loc trung: vong nhanh chi day khi mode DOI
 
   bool     running_{false};
   Step     step_{STEP_DONE};

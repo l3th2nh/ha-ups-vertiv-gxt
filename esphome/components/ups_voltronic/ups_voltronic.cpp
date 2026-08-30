@@ -78,8 +78,11 @@ void UpsVoltronic::update() {
     ESP_LOGW(TAG, "Vong doc truoc chua xong, bo qua nhip nay");
     return;
   }
-  // Bat dau mot vong doc moi
+  // Bat dau mot vong doc DAY DU
   this->running_ = true;
+  this->mode_only_ = false;
+  this->got_mode_ = false;
+  this->last_mode_poll_ = millis();   // vua hoi QMOD roi, khoi hoi lai ngay
   this->got_qgs_ = false;
   this->got_qbv_ = false;
   this->has_warning_ = false;
@@ -88,7 +91,17 @@ void UpsVoltronic::update() {
 }
 
 void UpsVoltronic::loop() {
-  if (!this->running_) return;
+  if (!this->running_) {
+    // Giua hai vong day du, hoi rieng QMOD theo nhip nhanh de bat mat dien
+    if (this->mode_interval_ == 0) return;
+    if (millis() - this->last_mode_poll_ < this->mode_interval_) return;
+    this->last_mode_poll_ = millis();
+    this->running_ = true;
+    this->mode_only_ = true;
+    this->got_mode_ = false;
+    this->start_step_(STEP_QMOD);
+    return;
+  }
 
   // Doc dan tung byte, khong chan vong lap
   while (this->available()) {
@@ -98,14 +111,10 @@ void UpsVoltronic::loop() {
     if (c == '\r') {
       this->buf_[this->buf_len_] = '\0';
       this->handle_reply_(this->step_, this->buf_);
+      if (this->mode_only_) { this->finish_round_(); return; }
       Step next = static_cast<Step>(this->step_ + 1);
-      if (next >= STEP_DONE) {
-        this->publish_all_();
-        this->running_ = false;
-        this->step_ = STEP_DONE;
-      } else {
-        this->start_step_(next);
-      }
+      if (next >= STEP_DONE) this->finish_round_();
+      else this->start_step_(next);
       return;
     }
     if (this->buf_len_ < sizeof(this->buf_) - 1) this->buf_[this->buf_len_++] = (char) c;
@@ -128,14 +137,10 @@ void UpsVoltronic::loop() {
                     "(dao tx_pin/rx_pin, kiem cap null-modem, VCC 3.3V)",
                STEP_CMD[this->step_]);
     }
+    if (this->mode_only_) { this->finish_round_(); return; }
     Step next = static_cast<Step>(this->step_ + 1);
-    if (next >= STEP_DONE) {
-      this->publish_all_();
-      this->running_ = false;
-      this->step_ = STEP_DONE;
-    } else {
-      this->start_step_(next);
-    }
+    if (next >= STEP_DONE) this->finish_round_();
+    else this->start_step_(next);
   }
 }
 
@@ -178,6 +183,7 @@ void UpsVoltronic::handle_reply_(Step s, const char *reply) {
   switch (s) {
     case STEP_QMOD:
       this->mode_ = tmp[0];
+      this->got_mode_ = true;
       break;
 
     case STEP_QGS: {
@@ -228,6 +234,33 @@ void UpsVoltronic::handle_reply_(Step s, const char *reply) {
   }
 }
 
+void UpsVoltronic::finish_round_() {
+  if (this->mode_only_) this->publish_mode_();
+  else                  this->publish_all_();
+  this->running_ = false;
+  this->mode_only_ = false;
+  this->step_ = STEP_DONE;
+}
+
+// Vong hoi nhanh: chi co QMOD nen chi day nhung gi QMOD biet.
+// KHONG dung vao fail_rounds_/auto-baud - viec do de vong day du lo, tranh
+// chuyen vong nhanh that bai lam doi baud lien tuc.
+void UpsVoltronic::publish_mode_() {
+  if (!this->got_mode_) return;
+  // Hoi moi giay nhung chi DAY khi mode thuc su doi. Text sensor cua ESPHome
+  // goi notify_frontend_() vo dieu kien, khong tu loc trung -> khong loc o day
+  // thi moi giay lai ban mot ban tin API vo ich.
+  // Vong day du (10s) van day dinh ky nen HA khong bao gio bi treo so cu.
+  if (this->mode_ == this->last_pub_mode_) return;
+  this->last_pub_mode_ = this->mode_;
+#ifdef USE_BINARY_SENSOR
+  if (this->on_battery_) this->on_battery_->publish_state(this->mode_ == 'B');
+#endif
+#ifdef USE_TEXT_SENSOR
+  if (this->status_) this->status_->publish_state(mode_alias_(this->mode_));
+#endif
+}
+
 void UpsVoltronic::publish_all_() {
   if (!this->got_qgs_ && !this->got_qbv_) {
     ESP_LOGW(TAG, "Khong doc duoc gi trong vong nay - bo qua, khong day so cu len HA");
@@ -264,6 +297,7 @@ void UpsVoltronic::publish_all_() {
 #ifdef USE_TEXT_SENSOR
   if (this->status_) this->status_->publish_state(mode_alias_(this->mode_));
 #endif
+  this->last_pub_mode_ = this->mode_;
 }
 
 }  // namespace ups_voltronic

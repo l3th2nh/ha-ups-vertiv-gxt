@@ -90,9 +90,13 @@ uart:
 ups_voltronic:
   id: ups
   uart_id: ups_uart
-  # 5s: mot vong 5 lenh chi mat ~1.5s khi UPS tra loi binh thuong (~250ms/lenh),
-  # nen 5s la an toan va cat tre phat hien mat dien tu ~16s xuong ~6s.
-  update_interval: 5s
+  # TACH NHIP HOI - hai nhip khac nhau cho hai loai du lieu:
+  #   mode_interval    : chi hoi QMOD (3 byte) -> bat mat dien gan nhu tuc thi
+  #   update_interval  : ca bo 5 lenh -> cac so do von thay doi cham
+  # QMOD nhe hon ca bo lenh hang chuc lan, nen hoi day duoc ma tai duong RS-232
+  # con THAP hon so voi hoi ca bo moi 5s nhu truoc.
+  mode_interval: 1s
+  update_interval: 10s
   rated_watts: 2400        # 3000 VA x PF 0.80, lay tu lenh QMD cua chinh may nay
 
   battery_level:

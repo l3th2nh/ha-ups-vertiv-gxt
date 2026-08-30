@@ -37,6 +37,7 @@ UpsVoltronic = ups_voltronic_ns.class_(
 
 CONF_RATED_WATTS = "rated_watts"
 CONF_AUTO_BAUD = "auto_baud"
+CONF_MODE_INTERVAL = "mode_interval"
 
 # key trong YAML -> (ham setter trong C++, schema)
 NUMERIC_SENSORS = {
@@ -167,6 +168,7 @@ _schema = {
     # Manual cua UPS khong ghi toc do baud -> de thiet bi tu quet.
     # Tat khi da biet chac toc do, de khoi doi lung tung luc UPS tam im.
     cv.Optional(CONF_AUTO_BAUD, default=True): cv.boolean,
+    cv.Optional(CONF_MODE_INTERVAL, default="1s"): cv.positive_time_period_milliseconds,
 }
 for _key, (_setter, _sch) in {**NUMERIC_SENSORS, **BINARY_SENSORS, **TEXT_SENSORS}.items():
     _schema[cv.Optional(_key)] = _sch
@@ -185,6 +187,7 @@ async def to_code(config):
 
     cg.add(var.set_rated_watts(config[CONF_RATED_WATTS]))
     cg.add(var.set_auto_baud(config[CONF_AUTO_BAUD]))
+    cg.add(var.set_mode_interval(config[CONF_MODE_INTERVAL]))
 
     for key, (setter, _) in NUMERIC_SENSORS.items():
         if key in config:
