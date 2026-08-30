@@ -1,12 +1,25 @@
 ﻿# Firmware doc UPS Vertiv/Liebert GXT-3000MTPLUS230 qua RS-232.
-# ESP32-C3 Super Mini + module MAX3232. Nap lan dau qua USB; sau do OTA qua WiFi.
+# ESP32-C3 Super Mini + module SP3232 (V0018). Nap lan dau qua USB; sau do OTA.
 #
-# DAU NOI
-#   MAX3232 VCC -> ESP32-C3 3V3   (KHONG cam 5V)
-#   MAX3232 GND -> ESP32-C3 GND
-#   MAX3232 TXD -> ESP32-C3 GPIO4   (du lieu tu UPS ve)
-#   MAX3232 RXD -> ESP32-C3 GPIO5   (lenh gui sang UPS)
-#   MAX3232 DB9 -> cap null-modem duc-duc -> cong RS-232 cua UPS
+# DAU NOI phia TTL
+#   SP3232 VCC -> ESP32-C3 3V3   (KHONG cam 5V)
+#   SP3232 GND -> ESP32-C3 GND
+#   SP3232 TXD -> ESP32-C3 GPIO4   (du lieu tu UPS ve)
+#   SP3232 RXD -> ESP32-C3 GPIO5   (lenh gui sang UPS)
+#
+# DAU NOI phia RS-232 - DA KIEM CHUNG THUC TE, chi BA day roi:
+#   UPS chan 2 (PHAT cua UPS) -> pad '2-RXD' cua module  <- dau vao bo THU
+#   UPS chan 3 (THU cua UPS)  -> pad '3-TXD' cua module  <- dau ra bo PHAT
+#   UPS chan 5 (GND)          -> pad '5-GND'
+#   Tuc la NOI THANG theo so: 2->2, 3->3, 5->5. KHONG dau cheo.
+#   Cong RS-232 cua UPS dau kieu DCE, giong ho Megatec/PowerMust.
+#   4 pad giua board (TTL-CTS/RTS, 232-CTS/RTS): DE TRONG.
+#
+#   CANH BAO: chan 3 do duoc -9V nhung do KHONG phai chan du lieu. Da mat gan
+#   hai ngay vi suy dien tu phep do dien ap do. Muc am chi chung minh day la
+#   MOT dau ra dang giu MARK, khong chung minh no la duong du lieu.
+#   Bang chung that la UPS tra loi: QPI -> (PI01, QMOD -> (L,
+#   QGS -> (242.8 50.0 229.5 50.0 001.5 011 374.0 375.9 082...
 #
 #   Chan 4/5 chon co chu y: tranh GPIO2/8/9 vi la chan strapping tren C3
 #   (GPIO8 con la LED onboard, GPIO9 la nut BOOT).
@@ -24,11 +37,11 @@ esp32:
     type: arduino
 
 logger:
-  # baud_rate: 0 -> TAT hoan toan hardware UART cua logger, chi ghi log qua USB CDC.
-  # ESP32-C3 chi co UART0 va UART1. De logger giu UART0 la thu hep cho lua chon,
-  # va neu day tin hieu vo tinh nam o GPIO20/GPIO21 (UART0, nhieu bo in san TX/RX)
-  # thi logger se ban thang ra do -> nhieu loan duong RS-232.
-  baud_rate: 0
+  # USB_SERIAL_JTAG: log di thang qua cong USB native cua ESP32-C3, KHONG chiem
+  # GPIO nao. Tuyet doi khong dung baud_rate: 0 - cai do tat log HOAN TOAN,
+  # ke ca qua USB, va da tung lam mat ca buoi chan doan.
+  hardware_uart: USB_SERIAL_JTAG
+  level: DEBUG
 
 api:
 
@@ -62,12 +75,8 @@ external_components:
 # ---------------------------------------------------------------------------
 uart:
   id: ups_uart
-  # Tro ve dung so do trong README (MAX3232 TXD -> GPIO4, RXD -> GPIO5).
-  # Da thu ca hai chieu, ket qua deu chi ve mot nguyen nhan chung:
-  #   tx=5 rx=4 -> RX tha noi   (toan byte 00 xen lan FF/01)
-  #   tx=4 rx=5 -> vong lai NGAY (0-1ms, khong the di qua day o 2400 baud)
-  # Chip MAX3232 KHONG duoc cap nguon se cho dung hai hien tuong nay:
-  # dau ra TTL tha noi, va cac chan dan nhau qua diode bao ve ESD.
+  # SP3232 TXD -> GPIO4, RXD -> GPIO5. Neu khong nhan duoc du lieu, dao hai
+  # chan nay roi nap lai - vo hai, khong chay gi.
   tx_pin: GPIO5
   rx_pin: GPIO4
   baud_rate: 2400        # diem xuat phat; firmware tu quet neu khong co phan hoi

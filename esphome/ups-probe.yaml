@@ -1,0 +1,156 @@
+# ============================================================================
+#  MAY DO GIAO THUC - firmware chan doan, KHONG dung de van hanh
+#
+#  Boi canh: duong day RS-232 da duoc chung minh la LANH - log im lang sach,
+#  khong mot byte rac. UPS cung dang song: chan 3 giu MARK -9V. Nhung no khong
+#  tra loi lenh Voltronic (QMOD/QGS/...), vi giao thuc PI01 chi moi duoc kiem
+#  chung qua cong USB, CHUA BAO GIO qua cong RS-232.
+#
+#  Firmware nay quet ba chieu cung luc:
+#     lenh  x  toc do baud  x  parity
+#  va ghi lai moi byte nhan duoc. Parity la bien so chua tung thu - suot tu dau
+#  ta chi dung 8N1.
+#
+#  DAU NOI (ba day roi, DAU CHEO - ca UPS lan module deu la DTE):
+#     UPS chan 3 (PHAT, -9V) -> pad '2-RXD' cua module SP3232
+#     UPS chan 2 (THU)       -> pad '3-TXD'
+#     UPS chan 5 (GND)       -> pad '5-GND'
+#     SP3232 TXD -> GPIO4    SP3232 RXD -> GPIO5    VCC -> 3V3
+# ============================================================================
+
+esphome:
+  name: ups-probe
+  friendly_name: UPS Probe
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: arduino
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+  level: DEBUG
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+  ap:
+    ssid: "UPS-Probe Fallback"
+    password: "upsvertiv123"
+
+captive_portal:
+
+uart:
+  id: probe_uart
+  tx_pin: GPIO5
+  rx_pin: GPIO4
+  baud_rate: 2400
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+
+globals:
+  - id: parity_idx
+    type: int
+    initial_value: '0'
+  - id: baud_idx
+    type: int
+    initial_value: '0'
+  - id: probe_idx
+    type: int
+    initial_value: '0'
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          // --- Lenh van ban ho Megatec / Voltronic (ket thuc bang CR) ---
+          static const uint8_t P_Q1[]    = {'Q','1','\r'};
+          static const uint8_t P_QS[]    = {'Q','S','\r'};
+          static const uint8_t P_QMOD[]  = {'Q','M','O','D','\r'};
+          static const uint8_t P_QPI[]   = {'Q','P','I','\r'};
+          static const uint8_t P_QGS[]   = {'Q','G','S','\r'};
+          static const uint8_t P_M[]     = {'M','\r'};
+          static const uint8_t P_F[]     = {'F','\r'};
+          static const uint8_t P_I[]     = {'I','\r'};
+          static const uint8_t P_QID[]   = {'Q','I','D','\r'};
+          static const uint8_t P_CR[]    = {'\r'};
+          // --- Khung nhi phan ESP-II cua Liebert: 01 <id> 02 01 01 <checksum> ---
+          static const uint8_t P_E148[]  = {0x01,0x94,0x02,0x01,0x01,0x99};
+          static const uint8_t P_E161[]  = {0x01,0xA1,0x02,0x01,0x01,0xA6};
+
+          struct Probe { const char *name; const uint8_t *data; uint8_t len; };
+          static const Probe PROBES[] = {
+            {"Q1",         P_Q1,   sizeof(P_Q1)},
+            {"QS",         P_QS,   sizeof(P_QS)},
+            {"QMOD",       P_QMOD, sizeof(P_QMOD)},
+            {"QPI",        P_QPI,  sizeof(P_QPI)},
+            {"QGS",        P_QGS,  sizeof(P_QGS)},
+            {"M",          P_M,    sizeof(P_M)},
+            {"F",          P_F,    sizeof(P_F)},
+            {"I",          P_I,    sizeof(P_I)},
+            {"QID",        P_QID,  sizeof(P_QID)},
+            {"CR tron",    P_CR,   sizeof(P_CR)},
+            {"ESP2 id148", P_E148, sizeof(P_E148)},
+            {"ESP2 id161", P_E161, sizeof(P_E161)},
+          };
+          static const uint32_t BAUDS[] = {1200, 2400, 4800, 9600, 19200};
+
+          const int NP = sizeof(PROBES) / sizeof(PROBES[0]);
+          const int NB = sizeof(BAUDS) / sizeof(BAUDS[0]);
+          const int NPAR = 3;
+
+          int pai = id(parity_idx), bi = id(baud_idx), pi = id(probe_idx);
+          uint32_t baud = BAUDS[bi];
+          const char *pname = (pai == 0) ? "8N1" : ((pai == 1) ? "8E1" : "8O1");
+
+          id(probe_uart).set_baud_rate(baud);
+          id(probe_uart).set_parity(pai == 0 ? uart::UART_CONFIG_PARITY_NONE
+                                   : (pai == 1 ? uart::UART_CONFIG_PARITY_EVEN
+                                               : uart::UART_CONFIG_PARITY_ODD));
+          id(probe_uart).load_settings(false);
+
+          while (id(probe_uart).available()) { uint8_t t; id(probe_uart).read_byte(&t); }
+          id(probe_uart).write_array(PROBES[pi].data, PROBES[pi].len);
+          id(probe_uart).flush();
+          delay(400);
+
+          int n = id(probe_uart).available();
+          if (n > 0) {
+            if (n > 48) n = 48;
+            uint8_t buf[48];
+            id(probe_uart).read_array(buf, n);
+            char hex[3 * 48 + 1];
+            int o = 0;
+            for (int i = 0; i < n; i++) o += sprintf(hex + o, "%02X ", buf[i]);
+            char txt[49];
+            for (int i = 0; i < n; i++) txt[i] = (buf[i] >= 32 && buf[i] < 127) ? (char) buf[i] : '.';
+            txt[n] = 0;
+            ESP_LOGW("probe", ">>> TRUNG! %s %u baud | %s | %d byte | %s| '%s'",
+                     pname, (unsigned) baud, PROBES[pi].name, n, hex, txt);
+          } else {
+            ESP_LOGD("probe", "    %s %u baud | %s | khong co gi",
+                     pname, (unsigned) baud, PROBES[pi].name);
+          }
+
+          pi++;
+          if (pi >= NP) {
+            pi = 0;
+            bi++;
+            if (bi >= NB) {
+              bi = 0;
+              pai = (pai + 1) % NPAR;
+              ESP_LOGI("probe", "########## HET MOT VONG PARITY, sang %s ##########",
+                       (pai == 0) ? "8N1" : ((pai == 1) ? "8E1" : "8O1"));
+            }
+            ESP_LOGI("probe", "===== sang %u baud =====", (unsigned) BAUDS[bi]);
+          }
+          id(probe_idx) = pi;
+          id(baud_idx) = bi;
+          id(parity_idx) = pai;

@@ -4,7 +4,7 @@
 Home Assistant kèm cảnh báo mất điện gửi tới điện thoại.
 
 ```
-UPS ──RS-232──> MAX3232 ──TTL──> ESP32-C3 (ESPHome) ──WiFi──> Home Assistant
+UPS ──RS-232──> SP3232 ──TTL──> ESP32-C3 (ESPHome) ──WiFi──> Home Assistant
                                                                  ├── panel /ups
                                                                  └── cảnh báo → điện thoại
 ```
@@ -23,65 +23,85 @@ Thiết bị chạy 24/7 và độc lập với máy tính, nên không có lỗ
 | Món | Ghi chú |
 |---|---|
 | **ESP32-C3 Super Mini** | Loại nào cũng được; C3 cần cấu hình riêng (xem dưới) |
-| **Module MAX3232 có DB9** | Chuyển RS-232 (±12V) ↔ TTL 3.3V |
-| **Cáp null-modem DB9 đực–đực** | Cổng RS-232 của UPS là đầu **cái**, module cũng **cái** |
+| **Module SP3232 breakout** | Chuyển RS-232 (±9V) ↔ TTL 3.3V. Loại **không gắn DB9**, tách rõ hai phía `TTL` và `RS232` |
+| **Đầu hàn DB9 đực + cáp 3 sợi** | Cổng RS-232 của UPS là đầu **cái**. Chỉ cần 3 sợi: chân 2, 3, 5 |
 | Củ sạc USB 5V | Cắm vào dãy `OUTPUT` của UPS |
 | Đầu chuyển IEC C14 → ổ cắm 3 chân | Ổ ra của UPS là **IEC C13**, củ sạc không cắm thẳng được |
 
 ## Đấu nối
 
 ```
-                ESP32-C3 Super Mini          Module MAX3232
+                ESP32-C3 Super Mini          Module SP3232
                 ┌──────────────┐             ┌─────────────┐
    USB 5V ─────►│ USB-C        │             │             │
                 │          3V3 ├────────────►│ VCC         │
-                │          GND ├────────────►│ GND         │      ┌───────┐
-                │       GPIO4  │◄────────────┤ TXD         │      │  DB9  │
-                │       GPIO5  ├────────────►│ RXD         │      │ (cái) │
-                └──────────────┘             └─────────────┴──────┴───┬───┘
-                                                                      │
-                                              cáp null-modem đực–đực  │
-                                                                      ▼
-                                                          UPS · cổng RS-232
+                │          GND ├────────────►│ GND         │
+                │       GPIO4  │◄────────────┤ TXD  2-RXD ├◄──── UPS chân 2
+                │       GPIO5  ├────────────►│ RXD  3-TXD ├────► UPS chân 3
+                └──────────────┘             │      5-GND ├───── UPS chân 5
+                                             └─────────────┘
 ```
 
-| MAX3232 | ESP32-C3 | |
+| SP3232 · phía TTL | ESP32-C3 | |
 |---|---|---|
 | `VCC` | **`3V3`** | **đừng cắm 5V** — sẽ đưa 5V vào chân GPIO |
 | `GND` | `GND` | |
 | `TXD` | `GPIO4` | dữ liệu từ UPS về |
 | `RXD` | `GPIO5` | lệnh gửi sang UPS |
 
+| SP3232 · phía RS232 | UPS DB9 | |
+|---|---|---|
+| `2-RXD` | **chân 2** | chân **PHÁT** của UPS |
+| `3-TXD` | **chân 3** | chân **THU** của UPS |
+| `5-GND` | **chân 5** | mass |
+
+4 pad ở giữa board (`TTL-CTS`, `TTL-RTS`, `232-CTS`, `232-RTS`): **để trống**.
+
 GPIO4/GPIO5 chọn có chủ ý: **tránh GPIO2, GPIO8, GPIO9** vì là chân strapping trên C3 —
 GPIO8 còn là LED onboard, GPIO9 là nút BOOT.
 
-## ⚠️ Cổng RS-232 — hai tài liệu, hai sơ đồ chân khác nhau
+## Cổng RS-232 — sơ đồ chân đã kiểm chứng
 
 Máy này chạy **Voltronic PI01** (`QPI` → `(PI01`), không phải Megatec/Q1 đời cũ
-(`Q1` và `QS` đều trả `(NAK`). Hai giao thức có tài liệu cáp **khác nhau**:
+(`Q1` và `QS` đều trả `(NAK`).
 
-| Tài liệu | Áp dụng cho | Sơ đồ chân |
+Cổng RS-232 của UPS đấu kiểu **DCE** — nối **THẲNG theo số**, không đấu chéo:
+
+| UPS DB9 | Vai trò | Nối tới pad module |
 |---|---|---|
-| [Megatec protocol](https://www.networkupstools.org/protocols/megatec.html) | UPS Megatec/Q1 **đời cũ** | chân **9** (UPS TX), **6** (UPS RX), **7** (GND) |
-| [Voltronic protocol](https://networkupstools.org/protocols/voltronic.html) | **đời này** | "9 pins female D-type — only 3 wires: TX, RX (**crossed**) and GND" — **không ghi số chân** |
+| **chân 2** | **PHÁT** của UPS | `2-RXD` (đầu vào bộ thu) |
+| **chân 3** | **THU** của UPS | `3-TXD` (đầu ra bộ phát) |
+| **chân 5** | mass | `5-GND` |
 
-Tài liệu Voltronic chỉ nói **cáp chéo, 3 dây**, nhiều khả năng là chân tiêu chuẩn
-**2 / 3 / 5** như cổng COM máy tính. Sơ đồ 9/6/7 là của Megatec đời cũ và **đã thử,
-không chạy trên máy này**.
+Chỉ nối đúng ba dây này. Network UPS Tools cảnh báo cho dòng GXT: *"an RS-232 cable
+with ONLY the RX, TX and ground pin must be used... the handshaking lines are used for
+purposes other than RS-232 flow control. Use of a standard RS-232 cable with full
+handshaking may result in undesired operation and/or shutdown."*
 
-### Tham số cổng (cả hai tài liệu đều thống nhất)
+### ⚠️ Đừng suy diễn sơ đồ chân từ phép đo điện áp
+
+Chân 3 đo được **−9 V**, và từ đó đã có kết luận sai rằng chân 3 là chân phát —
+mất gần hai ngày vì suy diễn này. Mức âm chỉ chứng minh đó là **một** đầu ra đang
+giữ MARK, **không** chứng minh nó là đường dữ liệu. Chân 3 trên máy này mang chức
+năng khác.
+
+Bằng chứng đúng là **phép thử chức năng**: quét lệnh × baud × parity rồi xem UPS có
+trả lời không. Công cụ quét nằm ở [`esphome/ups-probe.yaml`](esphome/ups-probe.yaml).
+Sơ đồ 9/6/7 của Megatec đời cũ **không áp dụng** cho máy này.
+
+### Tham số cổng
 
 | Mục | Giá trị |
 |---|---|
-| Baud | **2400** |
+| Baud | **2400** — chỉ tốc độ này có phản hồi |
 | Data bits | 8 |
 | Parity | None |
 | Stop bits | 1 |
 
 ### Sơ đồ chân DB9 — nhìn thẳng vào cổng
 
-Cả cổng trên UPS lẫn trên module MAX3232 đều là đầu **CÁI** (9 lỗ). Đầu cái đánh số
-**ngược chiều** đầu đực để hai bên cắm khớp — đây là chỗ nhầm phổ biến nhất.
+Cổng trên UPS là đầu **CÁI**, đầu hàn của bạn là **ĐỰC**. Hai loại đánh số **ngược
+chiều** nhau để cắm khớp — đây là chỗ nhầm phổ biến nhất.
 
 ```
 Nhìn thẳng vào đầu CÁI (9 lỗ):        Nhìn thẳng vào đầu ĐỰC (9 chân):
@@ -91,24 +111,10 @@ Nhìn thẳng vào đầu CÁI (9 lỗ):        Nhìn thẳng vào đầu ĐỰC
     ╰─────────────────────╯               ╰─────────────────────╯
 ```
 
+**Mặt hàn của đầu đực trùng với mặt cắm của đầu cái** — cả hai đều chạy `5 4 3 2 1`.
+Lật một đầu nối ra sau là thứ tự đảo, bất kể đực hay cái.
+
 Trên hầu hết đầu DB9 có số rất nhỏ đúc chìm cạnh chân **1**, **5**, **6**, **9**.
-
-> Dùng **đầu chuyển DB9 ra terminal vít** thì khỏi nhớ vị trí — cầu đấu đã in sẵn
-> số 1–9, cứ theo số mà nối.
-
-## ⚠️ CHƯA KIỂM CHỨNG: UPS có thể cần tắt bật lại để nhả cổng USB
-
-Manual ghi rõ: *"USB port and RS-232 port can't work at the same time."*
-
-Nếu UPS **chốt** cổng đang dùng ở thời điểm khởi động, thì việc rút cáp USB giữa
-chừng có thể **không đủ** — nó vẫn coi USB là cổng hoạt động cho tới khi được reset.
-
-Đây là biến số **duy nhất chưa được thử** sau khi đã loại trừ: sai baud (đã quét hết),
-sai chân (đã thử 2/3/5 thẳng, 2/3/5 chéo, 9/6/7), mất nguồn module (đã đo 3.3V),
-chập dây (đã kiểm), lỗi phần mềm (đã đối chứng trên chân không nối).
-
-> ⚠️ Tắt UPS sẽ **cắt điện toàn bộ tải**. Tắt máy tính và các thiết bị quan trọng
-> trước, hoặc chuyển tạm sang ổ điện tường.
 
 ## ⚠️ Ba điểm dễ hỏng
 
@@ -118,14 +124,15 @@ work at the same time"*. Còn cắm cáp USB thì cổng RS-232 im lặng hoàn 
 **Nguồn phải lấy từ dãy `OUTPUT`, không phải `P1`.** Ổ P1 bị UPS tự ngắt sau vài phút
 chạy pin — ESP32 sẽ chết đúng lúc cần nó nhất.
 
-**Nhãn TXD/RXD trên module MAX3232 không thống nhất giữa các hãng.** Nếu không nhận được
-dữ liệu, đảo `tx_pin` ↔ `rx_pin` trong YAML rồi nạp lại. Vô hại, không cháy gì.
+**Nhãn TXD/RXD trên module không thống nhất giữa các hãng.** Nếu không nhận được dữ
+liệu, đảo hai sợi ở phía RS-232 (`2-RXD` ↔ `3-TXD`) rồi thử lại. Vô hại, không cháy gì —
+và chính thao tác này đã gỡ được nút thắt lớn nhất của dự án.
 
 ---
 
 # 2. Nạp firmware
 
-```bash
+```powershell
 cd esphome
 cp secrets.yaml.example secrets.yaml     # rồi điền WiFi
 esphome run ups-vertiv.yaml              # lần đầu qua USB
@@ -134,19 +141,43 @@ esphome run ups-vertiv.yaml              # lần đầu qua USB
 Sau lần đầu, **cập nhật qua OTA**: `esphome run ups-vertiv.yaml` sẽ tự tìm thiết bị trên
 mạng, không cần cắm dây.
 
+## ⚠️ Phải build từ PowerShell, không dùng Git Bash
+
+Chạy `esphome compile` / `esphome run` từ **Git Bash (MSys/Mingw)** sẽ bị ESP-IDF chặn:
+nó in `MSys/Mingw is no longer supported...` rồi **thoát ngay, không biên dịch gì**.
+ESPHome vẫn báo `Successfully compiled program` và vẫn đóng gói `firmware.factory.bin`
+từ file `.bin` **cũ còn sót trong thư mục build**, rồi nạp lên chip.
+
+Hậu quả: chip chạy firmware cũ, mọi thay đổi trong YAML biến mất không dấu vết.
+
+Cách nhận biết chắc chắn: đối chiếu `.esphome/build/<tên>/build/<tên>.bin` — nếu mtime
+của nó **cũ hơn** file YAML thì build đã không chạy. Build thật sự thành công khi log
+có bảng báo cáo bộ nhớ (`RAM: ... Flash: ...`) và dòng `INFO Created: ... firmware.elf`.
+
 Thiết bị dùng `api:` native của ESPHome nên HA **tự phát hiện** — vào
 *Cài đặt → Thiết bị & Dịch vụ*, ESPHome sẽ đề xuất thêm `ups-vertiv`.
 
 ## Nếu không nhận được dữ liệu
 
-Log sẽ báo `Khong co phan hoi cho 'QMOD'`. Thử theo thứ tự:
+Đọc log rồi phân biệt **hai triệu chứng khác hẳn nhau** — chúng chỉ về hai nguyên
+nhân trái ngược:
 
-1. **Đã rút cáp USB khỏi UPS chưa** — nguyên nhân phổ biến nhất
-2. **Đảo `tx_pin` ↔ `rx_pin`** trong `ups-vertiv.yaml`
-3. **Đổi `baud_rate`**: manual không ghi tốc độ. Mặc định `2400` là chuẩn Megatec phổ
-   biến nhất; thử lần lượt `9600` → `1200` → `4800` → `19200`. Mỗi lần chỉ cần OTA.
-4. Đổi cáp null-modem sang đầu đổi giới tính thẳng
-5. Kiểm `VCC` có đúng 3.3V
+| Log báo | Nghĩa | Làm gì |
+|---|---|---|
+| `nhan N byte nhung khong thanh khung` kèm hex toàn `00`/`FF` | Chân RX **thả nổi** — module không lái đường dây | Kiểm nguồn module: đèn `PWR`, đo `VCC` **ngay tại chân module**, đo chân `TXD` phía RS232 phải ≈ **−5,5 V** |
+| `KHONG nhan duoc byte nao` | Đường dây **lành**, module đang giữ mức nghỉ, nhưng UPS không trả lời | Sai chân hoặc sai giao thức — xem dưới |
+
+Với triệu chứng thứ hai, thử theo thứ tự:
+
+1. **Đảo hai sợi phía RS-232** (`2-RXD` ↔ `3-TXD`). Đây là lỗi đã làm mất gần hai ngày
+2. **Đã rút cáp USB khỏi UPS chưa** — manual ghi rõ hai cổng không dùng cùng lúc
+3. **Nạp [`ups-probe.yaml`](esphome/ups-probe.yaml)** — quét lệnh × baud × parity và ghi
+   lại mọi byte nhận được. Nạp qua OTA, một vòng đầy đủ mất khoảng 3 phút
+4. Kiểm `VCC` có đúng 3.3V **đo tại chân module**, không đo ở phía ESP32
+
+Phép thử dứt điểm cho phía ta: **nối tắt `GPIO4` với `GPIO5`** (bỏ module ra). Nếu log
+dội lại đúng byte đã gửi (`51 4D 4F 44 0D` = `QMOD`) thì UART và firmware hoàn hảo, lỗi
+nằm ngoài ESP32.
 
 ## Vì sao ESP32-C3 cần cấu hình riêng
 

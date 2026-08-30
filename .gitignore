@@ -20,3 +20,7 @@ esphome/boot*.err
 __pycache__/
 *.pyc
 docs/photos/
+
+# Log chan doan cua esphome
+esphome/*.err
+esphome/live.log
