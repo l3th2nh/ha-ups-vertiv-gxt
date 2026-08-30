@@ -90,7 +90,9 @@ uart:
 ups_voltronic:
   id: ups
   uart_id: ups_uart
-  update_interval: 15s
+  # 5s: mot vong 5 lenh chi mat ~1.5s khi UPS tra loi binh thuong (~250ms/lenh),
+  # nen 5s la an toan va cat tre phat hien mat dien tu ~16s xuong ~6s.
+  update_interval: 5s
   rated_watts: 2400        # 3000 VA x PF 0.80, lay tu lenh QMD cua chinh may nay
 
   battery_level:
