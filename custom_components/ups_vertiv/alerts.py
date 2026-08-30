@@ -158,6 +158,11 @@ class UpsAlertEngine:
         # Cờ theo TỪNG lần mất điện, reset khi có điện lại
         self._warned = False
         self._crited = False
+        # Tự nhớ trạng thái nguồn thay vì tin vào old_state của HA.
+        # Lý do: khi thiết bị rớt mạng/khởi động lại, entity đi qua
+        # 'unavailable'. Nếu so old_state == "off" thì lần quay lại sẽ bị bỏ
+        # qua trong im lặng, đúng lỗi đã gặp. None = chưa biết.
+        self._last_on_batt: bool | None = None
 
     @property
     def cfg(self) -> dict:
@@ -181,6 +186,10 @@ class UpsAlertEngine:
             self._unsub = None
 
         self._ents = ents
+        if self._last_on_batt is None:
+            st = self.hass.states.get(ents["on_battery"])
+            if st and st.state in ("on", "off"):
+                self._last_on_batt = st.state == "on"
         watch = [ents["on_battery"], ents["battery"], ents["outlet_p1"]]
         self._unsub = async_track_state_change_event(self.hass, watch, self._on_change)
         _LOGGER.info("UPS: đang theo dõi cảnh báo trên %s", ", ".join(watch))
@@ -207,6 +216,7 @@ class UpsAlertEngine:
         old_s = old.state if old else None
         if old_s == new.state:
             return
+        _LOGGER.debug("UPS: %s %s -> %s", eid, old_s, new.state)
 
         e = self._ents
         svc = cfg.get("service", "")
@@ -220,7 +230,18 @@ class UpsAlertEngine:
 
         # ------------------------------------------------------ mất điện ---
         if eid == e.get("on_battery"):
-            if new.state == "on" and old_s == "off":
+            now_on = new.state == "on"
+            if self._last_on_batt is None:
+                # Lần đầu biết trạng thái: ghi nhận, không báo. Tránh bắn
+                # "đã có điện" ngay khi HA vừa khởi động lại.
+                self._last_on_batt = now_on
+                return
+            if now_on == self._last_on_batt:
+                return
+            self._last_on_batt = now_on
+            _LOGGER.info("UPS: nguồn đổi -> %s", "CHẠY PIN" if now_on else "ĐIỆN LƯỚI")
+
+            if now_on:
                 self._warned = False
                 self._crited = False
                 if cfg.get("outage"):
@@ -231,7 +252,7 @@ class UpsAlertEngine:
                         f"dự phòng khoảng {fmt(runtime, 'phút')}, tải {fmt(watt, 'W')}.",
                         "ups_nguon", "#f44336",
                     )
-            elif new.state == "off" and old_s == "on":
+            else:
                 self._warned = False
                 self._crited = False
                 if cfg.get("restore"):
