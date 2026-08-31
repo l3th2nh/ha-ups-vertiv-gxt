@@ -131,8 +131,28 @@ ups_voltronic:
   outlet_p1:
     name: "Outlet P1"
 
+# ---------------------------------------------------------------------------
+#  CHAN DOAN: thiet bi tung rot mang giua chung khi test mat dien.
+#  reset_reason tra loi dut khoat cau hoi "no reboot hay chi mat WiFi":
+#    Power on reset / Brownout  -> MAT NGUON that (nguon nuoi khong on dinh)
+#    Software/Panic/Watchdog    -> firmware crash
+#    Khong doi                  -> khong reboot, chi WiFi rot
+# ---------------------------------------------------------------------------
+debug:
+  update_interval: 30s
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "Reset Reason"
+      entity_category: diagnostic
+
 # Cam bien chan doan de theo doi chinh thiet bi tu xa
 sensor:
+  - platform: debug
+    free:
+      name: "Heap Free"
+      entity_category: diagnostic
   - platform: wifi_signal
     name: "WiFi RSSI"
     update_interval: 60s

@@ -43,6 +43,9 @@ DEFAULT_CONFIG = {
     "batt_crit": True,
     "batt_crit_at": 25,
     "shed": True,
+    # Moc xoa nhat ky (ISO). Nhat ky dung tu recorder cua HA nen KHONG the
+    # xoa du lieu that - chi an cac su kien truoc moc nay.
+    "log_cleared_at": "",
 }
 
 

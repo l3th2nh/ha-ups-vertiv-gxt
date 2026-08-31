@@ -21,6 +21,7 @@ from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers.storage import Store
 
 from .alerts import DEFAULT_CONFIG, UpsAlertEngine, resolve_entities, send_notification
@@ -97,6 +98,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         websocket_api.async_register_command(hass, ws_get)
         websocket_api.async_register_command(hass, ws_save)
         websocket_api.async_register_command(hass, ws_test)
+        websocket_api.async_register_command(hass, ws_clear_log)
 
     # ------------------------------------------------------------ engine ---
     if not store.get("engine"):
@@ -163,6 +165,26 @@ async def ws_save(hass: HomeAssistant, connection, msg) -> None:
     if store.get("engine"):
         store["engine"].refresh_tracking()
     connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/clear_log"})
+@websocket_api.async_response
+async def ws_clear_log(hass: HomeAssistant, connection, msg) -> None:
+    """Xoa nhat ky mat dien.
+
+    Nhat ky duoc DUNG LAI tu recorder cua Home Assistant chu khong do
+    integration luu, nen khong the xoa du lieu goc - va cung khong nen, vi do
+    la lich su chung cua ca he thong. Thay vao do ta ghi mot MOC THOI GIAN;
+    panel chi hien cac su kien xay ra SAU moc do.
+    """
+    store = hass.data.setdefault(DOMAIN, {})
+    cfg = {**DEFAULT_CONFIG, **(store.get("config") or {})}
+    cfg["log_cleared_at"] = dt_util.utcnow().isoformat()
+    store["config"] = cfg
+    if store.get("store"):
+        await store["store"].async_save(cfg)
+    _LOGGER.info("UPS: da xoa nhat ky (moc %s)", cfg["log_cleared_at"])
+    connection.send_result(msg["id"], {"ok": True, "cleared_at": cfg["log_cleared_at"]})
 
 
 @websocket_api.websocket_command(

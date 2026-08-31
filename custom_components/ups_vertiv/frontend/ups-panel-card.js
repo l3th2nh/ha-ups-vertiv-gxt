@@ -15,7 +15,7 @@
  * Chỉ đặt `prefix` khi muốn ép thủ công (ví dụ có 2 bộ UPS).
  */
 
-const UPS_CARD_VERSION = '4.0.0';
+const UPS_CARD_VERSION = '4.2.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -65,6 +65,23 @@ function fmtDuration(sec) {
   if (m < 60) return s ? `${m} phút ${s} giây` : `${m} phút`;
   const h = Math.floor(m / 60), mm = m % 60;
   return mm ? `${h} giờ ${mm} phút` : `${h} giờ`;
+}
+
+/** Khoa ngay theo giờ ĐỊA PHƯƠNG (không dùng toISOString - nó trả về UTC). */
+function dayKey(iso) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Nhãn ngày: 'Hôm nay' / 'Hôm qua' / 'Thứ Hai, 31/08'. */
+function dayLabel(iso) {
+  const d = new Date(iso);
+  const midnight = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((midnight(new Date()) - midnight(d)) / 86400000);
+  if (diff === 0) return 'Hôm nay';
+  if (diff === 1) return 'Hôm qua';
+  const THU = ['Chủ nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+  return `${THU[d.getDay()]}, ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function fmtWhen(iso) {
@@ -427,6 +444,17 @@ class UpsPanelCard extends HTMLElement {
         .sum { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:14px; }
         .sum .cell .v { font-size:1.1rem; }
 
+        .day { display:flex; justify-content:space-between; align-items:baseline;
+               gap:8px; flex-wrap:wrap; margin:14px 0 7px; padding-bottom:5px;
+               border-bottom:1px solid var(--divider-color); }
+        .day:first-child { margin-top:2px; }
+        .day-name { font-weight:600; font-size:.92rem; color:var(--primary-text-color); }
+        .day-sum  { font-size:.75rem; color:var(--secondary-text-color); }
+        .log-bar { display:flex; justify-content:flex-end; margin:10px 0 2px; }
+        .btn-clear { background:none; border:1px solid var(--divider-color);
+                     color:var(--secondary-text-color); border-radius:8px;
+                     padding:6px 14px; font-size:.8rem; cursor:pointer; }
+        .btn-clear:hover { color:#f44336; border-color:#f44336; }
         .ev { border-left:3px solid var(--divider-color); padding:10px 12px; margin-bottom:8px;
               border-radius:0 8px 8px 0; background:var(--secondary-background-color); }
         .ev.live { border-left-color:#f44336; background:rgba(244,67,54,.09); }
@@ -538,6 +566,9 @@ class UpsPanelCard extends HTMLElement {
             <div class="cell"><div class="k">Tổng thời gian</div> <div class="v" id="s-total">--</div></div>
             <div class="cell"><div class="k">Lần lâu nhất</div>   <div class="v" id="s-max">--</div></div>
           </div>
+          <div class="log-bar">
+            <button class="btn-clear" id="btn-clear-log">Xoá nhật ký</button>
+          </div>
           <div id="ev-list"></div>
         </div>
 
@@ -598,6 +629,7 @@ class UpsPanelCard extends HTMLElement {
     $('tab-set').addEventListener('click', () => this._setTab('set'));
     $('btn-save').addEventListener('click', () => this._saveSettings());
     $('btn-test').addEventListener('click', () => this._testNotify());
+    $('btn-clear-log').addEventListener('click', () => this._clearLog());
     this._built = true;
   }
 
@@ -723,13 +755,41 @@ class UpsPanelCard extends HTMLElement {
       : '';
   }
 
+  /** Xoá nhật ký: ghi một mốc thời gian, panel chỉ hiện sự kiện sau mốc đó. */
+  async _clearLog() {
+    const btn = this.shadowRoot.getElementById('btn-clear-log');
+    const msg = 'Xoá toàn bộ nhật ký đang hiển thị? '
+      + 'Lịch sử gốc trong Home Assistant vẫn được giữ nguyên — '
+      + 'panel chỉ ngừng hiển thị các lần mất điện trước thời điểm này.';
+    if (!confirm(msg)) return;
+    const old = btn.textContent;
+    btn.textContent = 'Đang xoá…';
+    btn.disabled = true;
+    try {
+      const res = await this._hass.callWS({ type: 'ups_vertiv/clear_log' });
+      this._cfg = { ...(this._cfg || {}), log_cleared_at: res.cleared_at };
+      this._renderLog();
+      btn.textContent = 'Đã xoá';
+      setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 1500);
+    } catch (e) {
+      btn.textContent = 'Lỗi: ' + (e.message || e);
+      btn.disabled = false;
+      setTimeout(() => { btn.textContent = old; }, 3000);
+    }
+  }
+
   // ---------------------------------------------------- vẽ tab nhật ký ---
   _renderLog() {
     const $ = (id) => this.shadowRoot.getElementById(id);
     const box = $('ev-list');
     if (!box) return;
 
-    const evs = (this._outages || []).slice().reverse();   // mới nhất lên đầu
+    // Bỏ qua các sự kiện trước mốc "đã xoá nhật ký"
+    const clearedAt = this._cfg && this._cfg.log_cleared_at
+      ? Date.parse(this._cfg.log_cleared_at) : 0;
+    const evs = (this._outages || [])
+      .filter((e) => !clearedAt || Date.parse(e.start) > clearedAt)
+      .slice().reverse();   // mới nhất lên đầu
     const done = evs.filter((e) => !e.ongoing);
     const total = done.reduce((a, e) => a + (e.duration_s || 0), 0);
     const longest = done.reduce((a, e) => Math.max(a, e.duration_s || 0), 0);
@@ -748,14 +808,25 @@ class UpsPanelCard extends HTMLElement {
       return;
     }
     if (!evs.length) {
-      box.innerHTML = `<div class="empty">Chưa ghi nhận lần mất điện nào trong
-        ${LOG_DAYS} ngày qua.<br>
+      box.innerHTML = `<div class="empty">${clearedAt
+        ? 'Nhật ký đã được xoá. Các lần mất điện mới sẽ hiện ở đây.'
+        : `Chưa ghi nhận lần mất điện nào trong ${LOG_DAYS} ngày qua.`}<br>
         Nhật ký dựng từ lịch sử của Home Assistant, nên chỉ có dữ liệu kể từ khi
         thiết bị được thêm vào.</div>`;
       return;
     }
 
-    box.innerHTML = evs.map((e) => {
+    // Gom theo ngày, giữ nguyên thứ tự mới nhất trước
+    const groups = [];
+    for (const e of evs) {
+      const k = dayKey(e.start);
+      if (!groups.length || groups[groups.length - 1].key !== k) {
+        groups.push({ key: k, iso: e.start, items: [] });
+      }
+      groups[groups.length - 1].items.push(e);
+    }
+
+    const renderEvent = (e) => {
       const live = !!e.ongoing;
       const tags = live ? '<span class="tag live">ĐANG DIỄN RA</span>' : '';
 
@@ -774,6 +845,19 @@ class UpsPanelCard extends HTMLElement {
           ${det.length ? `<div class="ev-det">${det.join(' &middot; ')}</div>` : ''}
           <div>${tags}</div>
         </div>`;
+    };
+
+    box.innerHTML = groups.map((g) => {
+      const gd = g.items.filter((e) => !e.ongoing);
+      const gtotal = gd.reduce((a, e) => a + (e.duration_s || 0), 0);
+      const sum = `${g.items.length} lần`
+        + (gd.length ? ` &middot; ${fmtDuration(gtotal)}` : '');
+      return `
+        <div class="day">
+          <span class="day-name">${dayLabel(g.iso)}</span>
+          <span class="day-sum">${sum}</span>
+        </div>
+        ${g.items.map(renderEvent).join('')}`;
     }).join('');
   }
 }
