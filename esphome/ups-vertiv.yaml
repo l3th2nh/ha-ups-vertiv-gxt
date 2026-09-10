@@ -52,7 +52,12 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   power_save_mode: none   # QUAN TRONG: khong cho WiFi ngu -> so lieu khong tre/rot
-  fast_connect: true      # ket noi lai nhanh khi mat song
+
+  # KHONG dung fast_connect. Tham so do bo qua buoc quet va noi thang vao BSSID
+  # da luu - chi hop voi mang AN SSID. Mang nay la mesh 3-4 AP, fast_connect se
+  # bam vao mot node cu du node khac manh hon nhieu. Bo di thi ESPHome quet va
+  # chon AP khoe nhat, doi lai lan ket noi dau cham hon vai giay.
+
   ap:
     ssid: "UPS-Vertiv Fallback"
     password: "upsvertiv123"

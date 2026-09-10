@@ -116,6 +116,33 @@ Lật một đầu nối ra sau là thứ tự đảo, bất kể đực hay cá
 
 Trên hầu hết đầu DB9 có số rất nhỏ đúc chìm cạnh chân **1**, **5**, **6**, **9**.
 
+## Khi mạch mất kết nối
+
+Đây là kiểu hỏng **nguy hiểm nhất** của cả hệ thống: mạch chết thì Home Assistant
+im lặng, và bạn tưởng mình vẫn đang được bảo vệ trong khi thực ra thì không.
+
+Panel có cảnh báo riêng cho việc này — bật ở tab *Cài đặt* → **"Mất kết nối với
+mạch quá N phút"**. Có thời gian ân hạn để rớt mạng chớp nhoáng không đánh thức
+bạn lúc nửa đêm. Khi mạch sống lại, nó báo tiếp một lần nữa.
+
+### Nếu đổi tên hoặc mật khẩu WiFi
+
+**Không cần tháo mạch ra nạp lại.** Khi không vào được mạng, ESP32 tự phát một
+điểm truy cập tên **`UPS-Vertiv Fallback`**, mật khẩu `upsvertiv123`. Dùng điện
+thoại nối vào đó, trình duyệt sẽ tự mở trang cấu hình — nhập tên và mật khẩu WiFi
+mới, mạch lưu lại vào flash và tự vào mạng.
+
+### Đọc `Reset Reason` để biết vì sao mạch khởi động lại
+
+| Giá trị | Nghĩa |
+|---|---|
+| `Power on reset` · `Brownout` | **Mất nguồn** — kiểm ổ cắm, củ sạc, dây USB |
+| `Software` · `Panic` · `Watchdog` | Firmware crash |
+| `USB peripheral` | Vừa nạp lại qua USB — bình thường |
+
+Nếu entity chuyển sang `unavailable` mà **không** kèm reboot, thì mạch vẫn sống,
+chỉ mất WiFi.
+
 ## ⚠️ Ba điểm dễ hỏng
 
 **USB và RS-232 không dùng cùng lúc.** Manual ghi rõ: *"USB port and RS-232 port can't

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 
 from .const import DOMAIN, PANEL_URL
 
@@ -43,6 +43,10 @@ DEFAULT_CONFIG = {
     "batt_crit": True,
     "batt_crit_at": 25,
     "shed": True,
+    # Bao khi CHINH MACH GIAM SAT chet. Day la kieu hong nguy hiem nhat:
+    # he thong im lang va nguoi dung tuong minh van duoc bao ve.
+    "offline": True,
+    "offline_after": 3,      # phut - de tranh bao nhieu khi rot mang chop nhoang
     # Moc xoa nhat ky (ISO). Nhat ky dung tu recorder cua HA nen KHONG the
     # xoa du lieu that - chi an cac su kien truoc moc nay.
     "log_cleared_at": "",
@@ -166,6 +170,9 @@ class UpsAlertEngine:
         # 'unavailable'. Nếu so old_state == "off" thì lần quay lại sẽ bị bỏ
         # qua trong im lặng, đúng lỗi đã gặp. None = chưa biết.
         self._last_on_batt: bool | None = None
+        # Theo doi chinh mach giam sat con song khong
+        self._offline_unsub = None
+        self._offline_notified = False
 
     @property
     def cfg(self) -> dict:
@@ -201,6 +208,30 @@ class UpsAlertEngine:
         if self._unsub:
             self._unsub()
             self._unsub = None
+        self._cancel_offline_timer()
+
+    def _cancel_offline_timer(self) -> None:
+        if self._offline_unsub:
+            self._offline_unsub()
+            self._offline_unsub = None
+
+    async def _offline_timeout(self, _now) -> None:
+        """Mach van mat tin hieu sau thoi gian an han -> bao dong."""
+        self._offline_unsub = None
+        self._offline_notified = True
+        cfg = self.cfg
+        _LOGGER.warning("UPS: MACH GIAM SAT MAT KET NOI qua %s phut",
+                        cfg.get("offline_after", 3))
+        if not cfg.get("offline"):
+            return
+        await send_notification(
+            self.hass, cfg.get("service", ""),
+            "⚠️ Mất kết nối với mạch giám sát UPS",
+            "Home Assistant không còn đọc được dữ liệu từ UPS, nên "
+            "SẼ KHÔNG báo được nếu mất điện. Kiểm tra mạch ESP32: còn điện "
+            "không, và nguồn có đang lấy từ dãy OUTPUT (không phải ổ P1) không.",
+            "ups_mach", "#ff9800",
+        )
 
     @callback
     def _on_change(self, event) -> None:
@@ -214,6 +245,34 @@ class UpsAlertEngine:
         eid = event.data.get("entity_id")
         old = event.data.get("old_state")
         new = event.data.get("new_state")
+
+        # --- mach giam sat song hay chet ---
+        # Chi theo doi tren MOT entity (on_battery) de khong bao trung.
+        if eid == self._ents.get("on_battery"):
+            gone = new is None or new.state in ("unknown", "unavailable")
+            if gone:
+                # Cho het thoi gian an han roi moi bao - rot mang chop nhoang
+                # thi khong dang danh thuc nguoi dung luc nua dem.
+                if self._offline_unsub is None and not self._offline_notified:
+                    delay = max(1, int(cfg.get("offline_after", 3))) * 60
+                    self._offline_unsub = async_call_later(
+                        self.hass, delay, self._offline_timeout
+                    )
+                    _LOGGER.debug("UPS: mach mat tin hieu, cho %ss truoc khi bao", delay)
+            else:
+                self._cancel_offline_timer()
+                if self._offline_notified:
+                    self._offline_notified = False
+                    _LOGGER.info("UPS: mach giam sat da ket noi lai")
+                    if cfg.get("offline"):
+                        await send_notification(
+                            self.hass, cfg.get("service", ""),
+                            "✅ Mạch giám sát UPS đã kết nối lại",
+                            "Đã đọc lại được dữ liệu từ UPS. Cảnh báo mất điện "
+                            "hoạt động bình thường trở lại.",
+                            "ups_mach", "#4caf50",
+                        )
+
         if new is None or new.state in ("unknown", "unavailable"):
             return
         old_s = old.state if old else None

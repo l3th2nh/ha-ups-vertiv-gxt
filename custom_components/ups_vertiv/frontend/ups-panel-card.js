@@ -15,7 +15,7 @@
  * Chỉ đặt `prefix` khi muốn ép thủ công (ví dụ có 2 bộ UPS).
  */
 
-const UPS_CARD_VERSION = '4.3.0';
+const UPS_CARD_VERSION = '4.4.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -333,6 +333,8 @@ class UpsPanelCard extends HTMLElement {
     $('set-warn').checked = !!c.batt_warn;
     $('set-crit').checked = !!c.batt_crit;
     $('set-shed').checked = !!c.shed;
+    $('set-offline').checked = c.offline !== false;
+    $('set-offline-after').value = c.offline_after ?? 3;
     $('set-warn-at').value = c.batt_warn_at ?? 50;
     $('set-crit-at').value = c.batt_crit_at ?? 25;
   }
@@ -349,6 +351,8 @@ class UpsPanelCard extends HTMLElement {
       batt_crit: $('set-crit').checked,
       batt_crit_at: Number($('set-crit-at').value) || 25,
       shed: $('set-shed').checked,
+      offline: $('set-offline').checked,
+      offline_after: Number($('set-offline-after').value) || 3,
     };
   }
 
@@ -610,6 +614,15 @@ class UpsPanelCard extends HTMLElement {
           <div class="row">
             <div class="lb">UPS tự ngắt ổ cắm P1</div>
             <input type="checkbox" id="set-shed">
+          </div>
+          <div class="row">
+            <div>
+              <div class="lb">Mất kết nối với mạch quá
+                <input type="number" id="set-offline-after" min="1" max="60"> phút</div>
+              <div class="hint">Báo khi chính mạch giám sát chết — lúc đó hệ thống
+                không còn báo được mất điện nữa</div>
+            </div>
+            <input type="checkbox" id="set-offline">
           </div>
 
           <div class="btns">
