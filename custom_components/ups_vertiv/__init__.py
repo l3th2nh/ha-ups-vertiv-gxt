@@ -5,8 +5,9 @@
 - Chạy engine cảnh báo nền: tự gửi thông báo khi mất điện / pin yếu / có điện lại,
   cấu hình ngay trong panel (KHÔNG cần viết YAML)
 
-Integration này KHÔNG tạo entity nào. Dữ liệu UPS do agent trên máy Windows
-(Ups-Monitor.ps1) đẩy lên qua MQTT Discovery.
+Integration này KHÔNG tạo entity nào. Dữ liệu UPS do thiết bị ESPHome
+(ups-vertiv: ESP32-C3 + SP3232 đọc cổng RS-232 của UPS) đẩy lên qua API native
+của ESPHome.
 """
 
 from __future__ import annotations

@@ -15,7 +15,7 @@
  * Chỉ đặt `prefix` khi muốn ép thủ công (ví dụ có 2 bộ UPS).
  */
 
-const UPS_CARD_VERSION = '4.2.0';
+const UPS_CARD_VERSION = '4.3.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -680,17 +680,22 @@ class UpsPanelCard extends HTMLElement {
       banner.innerHTML =
         `Không tìm thấy <code>${this._id('sensor', 'mode_text')}</code> trong Home Assistant.` +
         found +
-        `<br><br><b>Nếu danh sách trên trống:</b> HA chưa đọc MQTT discovery. Kiểm tra ` +
-        `<b>Cài đặt → Thiết bị &amp; Dịch vụ → MQTT → Cấu hình</b>: bật <i>Enable discovery</i> ` +
-        `và để <i>Discovery prefix</i> = <code>homeassistant</code>.` +
+        `<br><br><b>Nếu danh sách trên trống:</b> HA chưa có thiết bị ESPHome. Vào ` +
+        `<b>Cài đặt → Thiết bị &amp; Dịch vụ</b> và thêm tích hợp <b>ESPHome</b> ` +
+        `(thiết bị <code>ups-vertiv</code>, cổng 6053).` +
         `<br><b>Nếu có tên khác lạ:</b> HA đã tạo entity nhưng đặt tên khác — báo lại tên đó ` +
         `để sửa <code>prefix</code> của card cho khớp.`;
     } else if (unavail) {
       banner.className = 'banner off show';
       banner.innerHTML =
-        `Entity đã có trong HA nhưng đang <b>unavailable</b>. Nghĩa là agent ` +
-        `<code>Ups-Monitor.ps1</code> trên máy Windows không chạy, hoặc máy đó đang tắt, ` +
-        `hoặc mất kết nối tới broker MQTT.`;
+        `Entity đã có trong HA nhưng đang <b>unavailable</b> — Home Assistant không ` +
+        `nối được tới mạch <b>ESP32</b> đọc UPS.` +
+        `<br><br>Kiểm tra theo thứ tự:` +
+        `<br>1. <b>Mạch có điện không</b> — đèn nguồn trên ESP32 phải sáng. Nguồn phải lấy ` +
+        `từ dãy <code>OUTPUT</code> của UPS, <b>không phải ổ P1</b> (P1 bị UPS tự ngắt).` +
+        `<br>2. <b>Mạch có vào WiFi không</b> — nếu không, nó sẽ phát AP dự phòng tên ` +
+        `<code>UPS-Vertiv Fallback</code>. Dùng điện thoại quét WiFi để kiểm.` +
+        `<br>3. <b>Tên/mật khẩu WiFi có đổi không</b> — đổi rồi thì phải nạp lại firmware.`;
     } else if (hasFault) {
       banner.className = 'banner bad show';
       banner.textContent = 'UPS đang báo lỗi. Kiểm tra màn hình trên máy UPS.';
