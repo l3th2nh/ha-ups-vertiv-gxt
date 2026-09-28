@@ -15,7 +15,7 @@
  * Chỉ đặt `prefix` khi muốn ép thủ công (ví dụ có 2 bộ UPS).
  */
 
-const UPS_CARD_VERSION = '4.5.1';
+const UPS_CARD_VERSION = '4.5.2';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -141,15 +141,30 @@ class UpsPanelCard extends HTMLElement {
   /** Thử cả tên theo khoá lẫn tên do HA sinh từ nhãn hiển thị. */
   _id(domain, key) {
     const pfx = this._pfx || this._config.prefix;
-    const direct = `${domain}.${pfx}_${key}`;
-    if (this._hass && this._hass.states[direct]) return direct;
+    const sufs = NAME_SUFFIX[key] ? [key, NAME_SUFFIX[key]] : [key];
 
-    const alt = NAME_SUFFIX[key];
-    if (alt) {
-      const mapped = `${domain}.${pfx}_${alt}`;
-      if (this._hass && this._hass.states[mapped]) return mapped;
+    // 1. Đúng tiền tố đã dò — trường hợp thường gặp
+    for (const suf of sufs) {
+      const id = `${domain}.${pfx}_${suf}`;
+      if (this._hass && this._hass.states[id]) return id;
     }
-    return direct;   // để thông báo lỗi hiện tên dạng chuẩn, dễ đọc
+
+    // 2. Tiền tố KHÔNG đồng nhất giữa các entity.
+    //    Xảy ra khi thiết bị được đổi tên sau lúc một số entity đã tồn tại:
+    //    cái cũ giữ tên cũ, cái mới sinh ra mang tên mới. Ví dụ thực tế:
+    //      sensor.ups_vertiv_output_current      (tạo trước khi đổi tên)
+    //      switch.tang_3_ups_vertiv_buzzer       (tạo sau khi đổi tên)
+    //    Nên phải dò theo HẬU TỐ trong cùng domain thay vì ghép từ một tiền tố.
+    if (this._hass) {
+      for (const suf of sufs) {
+        const cands = Object.keys(this._hass.states)
+          .filter((id) => id.startsWith(`${domain}.`) && id.endsWith(`_${suf}`));
+        if (!cands.length) continue;
+        // Ưu tiên cái có chứa tiền tố đã dò, để không vớ nhầm entity nhà khác
+        return cands.find((id) => id.includes(pfx)) || cands[0];
+      }
+    }
+    return `${domain}.${pfx}_${sufs[0]}`;   // để thông báo lỗi đọc được
   }
 
   _state(domain, key) {
