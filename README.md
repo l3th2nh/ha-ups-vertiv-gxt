@@ -290,7 +290,23 @@ Phần này là kiến thức lõi, đã đo và kiểm chứng trên chính má
 | `QFLAG` | `(EpbrahczDovegfjlm` | Cờ bật (sau `E`) / tắt (sau `D`) |
 | `QMD` | `(############G3K ###3000 80 1/1 230 230 06 12.0` | Thông tin model |
 
-Không hỗ trợ: `QPIRI`, `QPIGS`, `QPGS0`, `QPRI`, `QBDR`, `PEa`/`PDa` — đều `(NAK`.
+Không hỗ trợ: `QPIRI`, `QPIGS`, `QPGS0`, `QPRI`, `QBDR` — đều `(NAK`.
+
+## Lệnh GHI cờ — hoạt động, nhưng phải viết HOA
+
+| Lệnh | Phản hồi | Việc nó làm |
+|---|---|---|
+| `QFLAG` | `(EpbraehczDovgfjlm` | Đọc cờ: sau `E` là đang bật, sau `D` là đang tắt |
+| `PEE` / `PDE` | `(ACK` | Bật / tắt **ECO mode** |
+| `PEA` / `PDA` | `(ACK` | Bật / tắt **còi báo** |
+
+> ⚠️ **Chữ cái cờ trong lệnh ghi phải VIẾT HOA.** `QFLAG` *trả về* chữ thường
+> (`...e...a...`) nhưng lệnh ghi chữ thường thì UPS trả `(NAK`. Tài liệu này từng
+> ghi nhầm là máy "không hỗ trợ `PEa`/`PDa`" — thực ra chỉ sai kiểu chữ, và nhầm
+> lẫn đó khiến cả tính năng điều khiển bị bỏ qua suốt một thời gian dài.
+
+Ý nghĩa vài cờ đã giải mã trên máy này: `e` ECO · `a` còi báo · `r` tự khởi động
+lại khi có điện · `v` converter · `g` tự tắt khi không tải · `o` bypass khi UPS tắt.
 
 **Bố cục `QGS`:** `InV · InHz · OutV · OutHz · OutA · Load% · BUS+ · BUS− · BattV ·
 BattCell · TempC · StatusBits`

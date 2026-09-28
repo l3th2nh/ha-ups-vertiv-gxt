@@ -28,6 +28,9 @@
 #ifdef USE_TEXT_SENSOR
 #include "esphome/components/text_sensor/text_sensor.h"
 #endif
+#ifdef USE_SWITCH
+#include "esphome/components/switch/switch.h"
+#endif
 
 namespace esphome {
 namespace ups_voltronic {
@@ -67,10 +70,22 @@ class UpsVoltronic : public PollingComponent, public uart::UARTDevice {
 #ifdef USE_TEXT_SENSOR
   void set_status(text_sensor::TextSensor *s) { status_ = s; }
 #endif
+#ifdef USE_SWITCH
+  void set_eco_switch(switch_::Switch *s) { eco_sw_ = s; }
+  void set_buzzer_switch(switch_::Switch *s) { buzzer_sw_ = s; }
+#endif
+
+  /// Xep hang mot lenh ghi co (PEx / PDx). Gui o khe ranh giua hai vong doc,
+  /// KHONG chen ngang luc dang cho phan hoi - lam vay se lam hong khung dang doc.
+  void queue_flag(char flag, bool on);
 
  protected:
   // Trinh tu lenh chay tuan tu, moi vong update() bat dau lai tu dau
-  enum Step : uint8_t { STEP_QMOD = 0, STEP_QGS, STEP_QBV, STEP_QWS, STEP_QSK1, STEP_DONE };
+  enum Step : uint8_t {
+    STEP_QMOD = 0, STEP_QGS, STEP_QBV, STEP_QWS, STEP_QSK1, STEP_QFLAG,
+    STEP_WRITE,        // gui lenh ghi dang xep hang (noi dung o pending_)
+    STEP_DONE
+  };
 
   void start_step_(Step s);
   void try_next_baud_();
@@ -78,6 +93,10 @@ class UpsVoltronic : public PollingComponent, public uart::UARTDevice {
   void handle_reply_(Step s, const char *reply);
   void publish_all_();
   void publish_mode_();     // chi day status + on_battery (vong hoi nhanh)
+  void advance_();
+  const char *cmd_name_(Step s) const;
+  void parse_flags_(const char *reply);
+  void publish_flags_();
   void finish_round_();
   static const char *mode_alias_(char mode);
 
@@ -96,6 +115,16 @@ class UpsVoltronic : public PollingComponent, public uart::UARTDevice {
   bool     mode_only_{false};
   bool     got_mode_{false};
   char     last_pub_mode_{0};   // loc trung: vong nhanh chi day khi mode DOI
+
+  // --- co thiet bi, doc tu QFLAG: '(E<dang bat>D<dang tat>' ---
+  bool     got_flags_{false};
+  bool     eco_on_{false};
+  bool     buzzer_on_{false};
+
+  // --- hang doi lenh ghi (chi can mot cho: nguoi dung bam rat thua) ---
+  char     pending_[6]{0};
+  bool     has_pending_{false};
+  bool     write_round_{false};
 
   bool     running_{false};
   Step     step_{STEP_DONE};
@@ -134,7 +163,24 @@ class UpsVoltronic : public PollingComponent, public uart::UARTDevice {
 #ifdef USE_TEXT_SENSOR
   text_sensor::TextSensor *status_{nullptr};
 #endif
+#ifdef USE_SWITCH
+  switch_::Switch *eco_sw_{nullptr};
+  switch_::Switch *buzzer_sw_{nullptr};
+#endif
 };
+
+#ifdef USE_SWITCH
+/// Cong tac co thiet bi. Bam -> xep hang lenh, KHONG doi trang thai ngay:
+/// trang thai that chi duoc cong bo sau khi QFLAG xac nhan may da nhan.
+class UpsFlagSwitch : public switch_::Switch, public Parented<UpsVoltronic> {
+ public:
+  void set_flag(char f) { this->flag_ = f; }
+
+ protected:
+  void write_state(bool state) override { this->parent_->queue_flag(this->flag_, state); }
+  char flag_{0};
+};
+#endif
 
 }  // namespace ups_voltronic
 }  // namespace esphome

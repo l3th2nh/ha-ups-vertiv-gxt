@@ -15,7 +15,7 @@
  * Chỉ đặt `prefix` khi muốn ép thủ công (ví dụ có 2 bộ UPS).
  */
 
-const UPS_CARD_VERSION = '4.4.0';
+const UPS_CARD_VERSION = '4.5.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -475,6 +475,18 @@ class UpsPanelCard extends HTMLElement {
 
         .empty { text-align:center; padding:28px 12px; color:var(--secondary-text-color); font-size:.85rem; line-height:1.7; }
 
+        .sec { font-weight:600; font-size:.82rem; letter-spacing:.04em;
+               text-transform:uppercase; color:var(--secondary-text-color);
+               margin:16px 0 8px; }
+        .sec:first-child { margin-top:4px; }
+        .mode-pill { font-weight:600; font-size:.85rem; padding:4px 12px;
+                     border-radius:999px; background:var(--secondary-background-color);
+                     color:var(--primary-text-color); white-space:nowrap; }
+        .mode-pill.ok   { background:rgba(76,175,80,.16);  color:#2e7d32; }
+        .mode-pill.eco  { background:rgba(3,169,244,.16);  color:#0277bd; }
+        .mode-pill.warn { background:rgba(255,152,0,.18);  color:#e65100; }
+        .mode-pill.bad  { background:rgba(244,67,54,.16);  color:#c62828; }
+        .ctl-note { min-height:1.1em; margin:2px 0 4px; }
         .row { display:flex; align-items:center; justify-content:space-between; gap:12px;
                padding:10px 12px; border-radius:8px; background:var(--secondary-background-color);
                margin-bottom:8px; }
@@ -577,6 +589,35 @@ class UpsPanelCard extends HTMLElement {
         </div>
 
         <div id="pane-set" style="display:none">
+
+          <div class="sec">Điều khiển UPS</div>
+          <div class="row">
+            <div>
+              <div class="lb">Chế độ đang chạy</div>
+              <div class="hint" id="ctl-mode-hint">Đọc trực tiếp từ UPS</div>
+            </div>
+            <div class="mode-pill" id="ctl-mode">--</div>
+          </div>
+          <div class="row">
+            <div>
+              <div class="lb">Chế độ ECO</div>
+              <div class="hint">Điện lưới tốt thì tải đi thẳng qua bypass — tiết kiệm
+                phần lớn điện không tải. Đổi lại thời gian chuyển sang pin là ~4 ms
+                thay vì 0, và đầu ra không còn được ổn áp.</div>
+            </div>
+            <input type="checkbox" id="ctl-eco">
+          </div>
+          <div class="row">
+            <div>
+              <div class="lb">Còi báo</div>
+              <div class="hint">Cảnh báo tại chỗ khi mất điện — không phụ thuộc WiFi
+                hay điện thoại.</div>
+            </div>
+            <input type="checkbox" id="ctl-buzzer">
+          </div>
+          <div class="hint ctl-note" id="ctl-msg"></div>
+
+          <div class="sec">Cảnh báo</div>
           <div class="row">
             <div>
               <div class="lb">Bật cảnh báo</div>
@@ -643,6 +684,10 @@ class UpsPanelCard extends HTMLElement {
     $('btn-save').addEventListener('click', () => this._saveSettings());
     $('btn-test').addEventListener('click', () => this._testNotify());
     $('btn-clear-log').addEventListener('click', () => this._clearLog());
+    $('ctl-eco').addEventListener('change', (ev) =>
+      this._toggleSwitch('eco_mode', ev.target.checked, 'Chế độ ECO'));
+    $('ctl-buzzer').addEventListener('change', (ev) =>
+      this._toggleSwitch('buzzer', ev.target.checked, 'Còi báo'));
     this._built = true;
   }
 
@@ -660,8 +705,37 @@ class UpsPanelCard extends HTMLElement {
     const hasFault = this._state('binary_sensor', 'has_warning') === 'on';
 
     // Phân biệt 2 tình huống hoàn toàn khác nhau:
-    //   missing = entity CHƯA TỒN TẠI  -> HA chưa đọc được MQTT discovery
-    //   unavail = entity CÓ nhưng mất dữ liệu -> agent trên máy Windows không chạy
+    //   missing = entity CHƯA TỒN TẠI  -> HA chưa thêm thiết bị ESPHome
+    //   unavail = entity CÓ nhưng mất dữ liệu -> mạch ESP32 mất điện hoặc mất mạng
+    // --- khối điều khiển ở tab Cài đặt ---
+    // Ô tick luôn lấy từ entity, KHÔNG giữ giá trị người dùng vừa bấm: nếu UPS
+    // từ chối lệnh thì ô tự quay về đúng thực tế thay vì hiển thị sai.
+    const MODE_PILL = {
+      Line: ['ok', 'Điện lưới · double-conversion'],
+      ECO: ['eco', 'ECO · tải qua bypass, tiết kiệm điện'],
+      Battery: ['bad', 'Đang chạy pin'],
+      Bypass: ['warn', 'Bypass · tải KHÔNG được bảo vệ'],
+      Converter: ['warn', 'Converter · khoá tần số, không tiết kiệm'],
+      Standby: ['warn', 'Standby · đầu ra đang tắt'],
+      Fault: ['bad', 'UPS báo lỗi'],
+    };
+    const pill = $('ctl-mode');
+    if (pill) {
+      const m = modeEnt && modeEnt.state ? modeEnt.state : null;
+      const [cls, hint] = MODE_PILL[m] || ['', 'Đọc trực tiếp từ UPS'];
+      pill.textContent = m || '--';
+      pill.className = 'mode-pill ' + cls;
+      const mh = $('ctl-mode-hint');
+      if (mh) mh.textContent = hint;
+    }
+    for (const [key, id] of [['eco_mode', 'ctl-eco'], ['buzzer', 'ctl-buzzer']]) {
+      const el = $(id);
+      if (!el) continue;
+      const st = this._state('switch', key);
+      el.checked = st === 'on';
+      el.disabled = (st !== 'on' && st !== 'off');   // entity chưa có / mất kết nối
+    }
+
     const missing = !modeEnt;
     const unavail = !missing && (modeText === 'unavailable' || modeText === 'unknown');
     const offline = missing || unavail;
@@ -771,6 +845,28 @@ class UpsPanelCard extends HTMLElement {
     $('foot').textContent = src && (src.last_updated || src.last_changed)
       ? `Cập nhật: ${new Date(src.last_updated || src.last_changed).toLocaleTimeString('vi-VN')}`
       : '';
+  }
+
+  /** Gửi lệnh bật/tắt xuống UPS.
+   *  KHÔNG tự đổi ô tick: trạng thái thật do thiết bị công bố sau khi UPS xác
+   *  nhận bằng QFLAG. Nếu UPS từ chối, ô tick sẽ tự quay về đúng thực tế.
+   */
+  async _toggleSwitch(key, on, label) {
+    const msg = this.shadowRoot.getElementById('ctl-msg');
+    const eid = this._id('switch', key);
+    if (!this._hass || !this._hass.states[eid]) {
+      msg.textContent = `Không tìm thấy ${eid} — cần nạp lại tích hợp ESPHome.`;
+      return;
+    }
+    msg.textContent = `Đang gửi lệnh ${on ? 'bật' : 'tắt'} ${label}…`;
+    try {
+      await this._hass.callService('switch', on ? 'turn_on' : 'turn_off',
+        { entity_id: eid });
+      msg.textContent = `Đã gửi. Chờ UPS xác nhận…`;
+      setTimeout(() => { if (msg.textContent.startsWith('Đã gửi')) msg.textContent = ''; }, 4000);
+    } catch (e) {
+      msg.textContent = `Lỗi: ${e.message || e}`;
+    }
   }
 
   /** Xoá nhật ký: ghi một mốc thời gian, panel chỉ hiện sự kiện sau mốc đó. */

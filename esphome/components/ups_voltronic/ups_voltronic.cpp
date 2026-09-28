@@ -12,7 +12,7 @@ static const char *const TAG = "ups_voltronic";
 // truyen, cong thoi gian UPS xu ly -> 1.5s la rong rai.
 static const uint32_t STEP_TIMEOUT_MS = 1500;
 
-static const char *const STEP_CMD[] = {"QMOD", "QGS", "QBV", "QWS", "QSK1"};
+static const char *const STEP_CMD[] = {"QMOD", "QGS", "QBV", "QWS", "QSK1", "QFLAG"};
 
 // Manual cua UPS khong ghi toc do baud. Thay vi nap lai firmware cho tung toc
 // do, thiet bi tu doi va thu. 2400 dat truoc vi la chuan Megatec pho bien nhat.
@@ -21,6 +21,11 @@ static const uint8_t  BAUD_COUNT = sizeof(BAUD_CANDIDATES) / sizeof(uint32_t);
 
 // So vong doc that bai lien tiep truoc khi doi sang toc do ke tiep
 static const uint8_t FAIL_ROUNDS_BEFORE_SWITCH = 2;
+
+// Ten lenh de in log: STEP_WRITE khong nam trong STEP_CMD
+const char *UpsVoltronic::cmd_name_(Step s) const {
+  return (s == STEP_WRITE) ? this->pending_ : STEP_CMD[s];
+}
 
 const char *UpsVoltronic::mode_alias_(char mode) {
   switch (mode) {
@@ -49,6 +54,12 @@ void UpsVoltronic::dump_config() {
   ESP_LOGCONFIG(TAG, "  Cong suat dinh muc: %.0f W", this->rated_watts_);
   LOG_UPDATE_INTERVAL(this);
   ESP_LOGCONFIG(TAG, "  Tu quet baud: %s", this->auto_baud_ ? "BAT" : "TAT");
+#ifdef USE_SWITCH
+  // In ca hai cong tac ra ban cau hinh khoi dong, de con doi chieu tu xa
+  // thay vi phai mo ma sinh ra moi biet chung co ton tai hay khong.
+  if (this->eco_sw_)    LOG_SWITCH("  ", "ECO Mode", this->eco_sw_);
+  if (this->buzzer_sw_) LOG_SWITCH("  ", "Buzzer", this->buzzer_sw_);
+#endif
 }
 
 void UpsVoltronic::try_next_baud_() {
@@ -70,7 +81,8 @@ void UpsVoltronic::start_step_(Step s) {
   this->step_ = s;
   this->buf_len_ = 0;
   this->step_started_ = millis();
-  if (s < STEP_DONE) this->send_(STEP_CMD[s]);
+  if (s == STEP_WRITE)      this->send_(this->pending_);
+  else if (s <= STEP_QFLAG) this->send_(STEP_CMD[s]);
 }
 
 void UpsVoltronic::update() {
@@ -92,6 +104,14 @@ void UpsVoltronic::update() {
 
 void UpsVoltronic::loop() {
   if (!this->running_) {
+    // Lenh ghi duoc uu tien: nguoi dung vua bam nut, phan hoi phai tuc thi
+    if (this->has_pending_) {
+      this->running_ = true;
+      this->write_round_ = true;
+      this->mode_only_ = false;
+      this->start_step_(STEP_WRITE);
+      return;
+    }
     // Giua hai vong day du, hoi rieng QMOD theo nhip nhanh de bat mat dien
     if (this->mode_interval_ == 0) return;
     if (millis() - this->last_mode_poll_ < this->mode_interval_) return;
@@ -111,10 +131,7 @@ void UpsVoltronic::loop() {
     if (c == '\r') {
       this->buf_[this->buf_len_] = '\0';
       this->handle_reply_(this->step_, this->buf_);
-      if (this->mode_only_) { this->finish_round_(); return; }
-      Step next = static_cast<Step>(this->step_ + 1);
-      if (next >= STEP_DONE) this->finish_round_();
-      else this->start_step_(next);
+      this->advance_();
       return;
     }
     if (this->buf_len_ < sizeof(this->buf_) - 1) this->buf_[this->buf_len_++] = (char) c;
@@ -130,17 +147,14 @@ void UpsVoltronic::loop() {
       for (int i = 0; i < n; i++) sprintf(hex + i * 3, "%02X ", (uint8_t) this->buf_[i]);
       hex[n * 3] = 0;   // ket thuc chuoi, khong can escape
       ESP_LOGW(TAG, "'%s': nhan %u byte nhung khong thanh khung -> SAI BAUD. Hex: %s",
-               STEP_CMD[this->step_], (unsigned) this->buf_len_, hex);
+               cmd_name_(this->step_), (unsigned) this->buf_len_, hex);
     } else {
       // KHONG co byte nao -> van de o duong day, khong phai baud
       ESP_LOGW(TAG, "'%s': KHONG nhan duoc byte nao -> loi duong day "
                     "(dao tx_pin/rx_pin, kiem cap null-modem, VCC 3.3V)",
-               STEP_CMD[this->step_]);
+               cmd_name_(this->step_));
     }
-    if (this->mode_only_) { this->finish_round_(); return; }
-    Step next = static_cast<Step>(this->step_ + 1);
-    if (next >= STEP_DONE) this->finish_round_();
-    else this->start_step_(next);
+    this->advance_();
   }
 }
 
@@ -160,7 +174,7 @@ static int split_fields(char *buf, char *fields[], int max_fields) {
 
 void UpsVoltronic::handle_reply_(Step s, const char *reply) {
   if (reply[0] != '(') {
-    ESP_LOGW(TAG, "'%s' tra ve khong hop le: '%s'", STEP_CMD[s], reply);
+    ESP_LOGW(TAG, "'%s' tra ve khong hop le: '%s'", cmd_name_(s), reply);
     return;
   }
   // Nhan duoc mot khung bat dau bang '(' nghia la toc do dang dung
@@ -171,8 +185,7 @@ void UpsVoltronic::handle_reply_(Step s, const char *reply) {
   }
 
   if (strncmp(reply, "(NAK", 4) == 0) {
-    ESP_LOGD(TAG, "'%s' bi tu choi (NAK) - firmware UPS khong ho tro lenh nay",
-             STEP_CMD[s]);
+    ESP_LOGW(TAG, "'%s' bi tu choi (NAK)", cmd_name_(s));
     return;
   }
 
@@ -184,6 +197,15 @@ void UpsVoltronic::handle_reply_(Step s, const char *reply) {
     case STEP_QMOD:
       this->mode_ = tmp[0];
       this->got_mode_ = true;
+      break;
+
+    case STEP_QFLAG:
+      this->parse_flags_(tmp);
+      break;
+
+    case STEP_WRITE:
+      // '(ACK' da duoc loc o tren; toi day nghia la may chap nhan.
+      ESP_LOGI(TAG, "Lenh '%s' duoc chap nhan", this->pending_);
       break;
 
     case STEP_QGS: {
@@ -234,11 +256,66 @@ void UpsVoltronic::handle_reply_(Step s, const char *reply) {
   }
 }
 
+// Di buoc ke tiep. Ba kieu vong khac nhau nen gom vao day, tranh lap logic
+// o ca duong thanh cong lan duong het gio - truoc day lap 2 cho va de lech.
+void UpsVoltronic::advance_() {
+  if (this->mode_only_) { this->finish_round_(); return; }
+
+  Step next;
+  if (this->write_round_) {
+    // Ghi xong -> doc QFLAG xac minh -> ket thuc
+    next = (this->step_ == STEP_WRITE) ? STEP_QFLAG : STEP_DONE;
+  } else {
+    next = static_cast<Step>(this->step_ + 1);
+    if (next > STEP_QFLAG) next = STEP_DONE;   // bo qua STEP_WRITE trong vong thuong
+  }
+  if (next >= STEP_DONE) this->finish_round_();
+  else                   this->start_step_(next);
+}
+
+void UpsVoltronic::queue_flag(char flag, bool on) {
+  this->pending_[0] = 'P';
+  this->pending_[1] = on ? 'E' : 'D';
+  // PHAI viet HOA. QFLAG TRA VE chu thuong ('...e...a...') nhung lenh ghi chi
+  // duoc chap nhan khi chu HOA: 'PEE', 'PDA'. Gui chu thuong -> UPS tra (NAK.
+  // Day chinh la ly do 'PEa'/'PDa' ghi trong README truoc day deu that bai.
+  this->pending_[2] = (flag >= 'a' && flag <= 'z') ? (char) (flag - 32) : flag;
+  this->pending_[3] = 0;
+  this->has_pending_ = true;
+  ESP_LOGI(TAG, "Xep hang lenh ghi co: %s", this->pending_);
+}
+
+// QFLAG tra '(E<dang bat>D<dang tat>'. Doc theo NHOM chu khong theo vi tri,
+// vi thu tu chu cai thay doi giua cac lan doc.
+void UpsVoltronic::parse_flags_(const char *reply) {
+  const char *d = strchr(reply, 'D');
+  if (reply[0] != 'E' || d == nullptr) {
+    ESP_LOGW(TAG, "QFLAG khong dung dinh dang: '%s'", reply);
+    return;
+  }
+  size_t on_len = d - reply - 1;          // cac chu giua 'E' va 'D'
+  this->eco_on_    = memchr(reply + 1, 'e', on_len) != nullptr;
+  this->buzzer_on_ = memchr(reply + 1, 'a', on_len) != nullptr;
+  this->got_flags_ = true;
+  this->publish_flags_();
+}
+
+void UpsVoltronic::publish_flags_() {
+#ifdef USE_SWITCH
+  if (this->eco_sw_)    this->eco_sw_->publish_state(this->eco_on_);
+  if (this->buzzer_sw_) this->buzzer_sw_->publish_state(this->buzzer_on_);
+#endif
+}
+
 void UpsVoltronic::finish_round_() {
   if (this->mode_only_) this->publish_mode_();
   else                  this->publish_all_();
   this->running_ = false;
   this->mode_only_ = false;
+  if (this->write_round_) {
+    this->write_round_ = false;
+    this->has_pending_ = false;
+  }
   this->step_ = STEP_DONE;
 }
 

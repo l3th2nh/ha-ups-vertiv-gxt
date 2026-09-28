@@ -129,6 +129,20 @@ ups_voltronic:
 
   status:
     name: "Status"
+
+  # --- Cong tac dieu khien, ghi qua lenh PEx/PDx, trang thai doc that tu QFLAG ---
+  # KHONG doi trang thai ngay khi bam: chi cong bo sau khi may xac nhan bang QFLAG,
+  # nen nut trong HA luon phan anh may that chu khong phai y dinh cua nguoi bam.
+  # restore_mode: DISABLED la BAT BUOC.
+  # Mac dinh ESPHome la ALWAYS_OFF -> moi lan khoi dong no goi write_state(false),
+  # tuc gui PDE/PDA va AM THAM TAT ECO lan coi bao. Loi nay chi lo ra sau mot lan
+  # mat dien. Nguon su that duy nhat la QFLAG doc tu may, khong phai bo nho cua ESP.
+  eco_mode:
+    name: "ECO Mode"
+    restore_mode: DISABLED
+  buzzer:
+    name: "Buzzer"
+    restore_mode: DISABLED
   on_battery:
     name: "On Battery"
   fault:

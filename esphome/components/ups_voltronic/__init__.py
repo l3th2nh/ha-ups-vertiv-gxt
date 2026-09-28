@@ -6,7 +6,7 @@ nhieu platform rieng. Chi khai bao cai nao can, bo qua cai khong dung.
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, sensor, text_sensor, uart
+from esphome.components import binary_sensor, sensor, switch, text_sensor, uart
 from esphome.const import (
     CONF_ID,
     DEVICE_CLASS_BATTERY,
@@ -28,12 +28,20 @@ from esphome.const import (
 )
 
 DEPENDENCIES = ["uart"]
-AUTO_LOAD = ["sensor", "binary_sensor", "text_sensor"]
+AUTO_LOAD = ["sensor", "binary_sensor", "text_sensor", "switch"]
 
 ups_voltronic_ns = cg.esphome_ns.namespace("ups_voltronic")
 UpsVoltronic = ups_voltronic_ns.class_(
     "UpsVoltronic", cg.PollingComponent, uart.UARTDevice
 )
+UpsFlagSwitch = ups_voltronic_ns.class_("UpsFlagSwitch", switch.Switch, cg.Parented)
+
+# Cong tac co thiet bi: key YAML -> (setter C++, chu co trong QFLAG)
+#   e = ECO mode, a = Alarm Control (coi bao)
+FLAG_SWITCHES = {
+    "eco_mode": ("set_eco_switch", "e"),
+    "buzzer": ("set_buzzer_switch", "a"),
+}
 
 CONF_RATED_WATTS = "rated_watts"
 CONF_AUTO_BAUD = "auto_baud"
@@ -169,6 +177,10 @@ _schema = {
     # Tat khi da biet chac toc do, de khoi doi lung tung luc UPS tam im.
     cv.Optional(CONF_AUTO_BAUD, default=True): cv.boolean,
     cv.Optional(CONF_MODE_INTERVAL, default="1s"): cv.positive_time_period_milliseconds,
+    **{
+        cv.Optional(_k): switch.switch_schema(UpsFlagSwitch)
+        for _k in FLAG_SWITCHES
+    },
 }
 for _key, (_setter, _sch) in {**NUMERIC_SENSORS, **BINARY_SENSORS, **TEXT_SENSORS}.items():
     _schema[cv.Optional(_key)] = _sch
@@ -188,6 +200,13 @@ async def to_code(config):
     cg.add(var.set_rated_watts(config[CONF_RATED_WATTS]))
     cg.add(var.set_auto_baud(config[CONF_AUTO_BAUD]))
     cg.add(var.set_mode_interval(config[CONF_MODE_INTERVAL]))
+
+    for key, (setter, flag) in FLAG_SWITCHES.items():
+        if key in config:
+            sw = await switch.new_switch(config[key])
+            await cg.register_parented(sw, var)
+            cg.add(sw.set_flag(cg.RawExpression(f"'{flag}'")))
+            cg.add(getattr(var, setter)(sw))
 
     for key, (setter, _) in NUMERIC_SENSORS.items():
         if key in config:
