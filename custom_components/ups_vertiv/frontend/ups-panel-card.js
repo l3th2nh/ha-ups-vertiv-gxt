@@ -15,7 +15,7 @@
  * Chỉ đặt `prefix` khi muốn ép thủ công (ví dụ có 2 bộ UPS).
  */
 
-const UPS_CARD_VERSION = '4.5.0';
+const UPS_CARD_VERSION = '4.5.1';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -603,7 +603,10 @@ class UpsPanelCard extends HTMLElement {
               <div class="lb">Chế độ ECO</div>
               <div class="hint">Điện lưới tốt thì tải đi thẳng qua bypass — tiết kiệm
                 phần lớn điện không tải. Đổi lại thời gian chuyển sang pin là ~4 ms
-                thay vì 0, và đầu ra không còn được ổn áp.</div>
+                thay vì 0, và đầu ra không còn được ổn áp.<br>
+                Đây là <b>cài đặt</b>. UPS có thể tạm về double-conversion khi điện
+                lưới lệch khỏi ngưỡng cho phép — lúc đó ô này vẫn bật nhưng
+                <b>Chế độ đang chạy</b> ở trên sẽ hiện <code>Line</code>.</div>
             </div>
             <input type="checkbox" id="ctl-eco">
           </div>
@@ -728,12 +731,20 @@ class UpsPanelCard extends HTMLElement {
       const mh = $('ctl-mode-hint');
       if (mh) mh.textContent = hint;
     }
+    this._pending = this._pending || {};
     for (const [key, id] of [['eco_mode', 'ctl-eco'], ['buzzer', 'ctl-buzzer']]) {
       const el = $(id);
       if (!el) continue;
       const st = this._state('switch', key);
+      // Đang chờ UPS xác nhận thì KHÔNG ghi đè ô tick, nếu không nó sẽ bật lại
+      // ngay khi vừa bấm và trông như "không bấm được".
+      if (this._pending[key] !== undefined) {
+        if (st === this._pending[key]) delete this._pending[key];   // đã xác nhận
+        continue;
+      }
+      // KHÔNG disable: ô bị khoá mà không giải thích gì thì người dùng không
+      // biết vì sao. Cứ cho bấm, rồi báo lỗi cụ thể nếu không gửi được.
       el.checked = st === 'on';
-      el.disabled = (st !== 'on' && st !== 'off');   // entity chưa có / mất kết nối
     }
 
     const missing = !modeEnt;
@@ -854,19 +865,39 @@ class UpsPanelCard extends HTMLElement {
   async _toggleSwitch(key, on, label) {
     const msg = this.shadowRoot.getElementById('ctl-msg');
     const eid = this._id('switch', key);
+
     if (!this._hass || !this._hass.states[eid]) {
-      msg.textContent = `Không tìm thấy ${eid} — cần nạp lại tích hợp ESPHome.`;
+      // Noi ro ten entity da tim, de doi chieu duoc ngay trong Developer Tools
+      msg.innerHTML = `Không tìm thấy <code>${eid}</code>.<br>` +
+        `Vào <b>Cài đặt → Thiết bị &amp; Dịch vụ → ESPHome → ⋮ → Tải lại</b>, ` +
+        `rồi <b>Ctrl+F5</b>.`;
+      this._update();          // tra o tick ve dung thuc te
       return;
     }
-    msg.textContent = `Đang gửi lệnh ${on ? 'bật' : 'tắt'} ${label}…`;
+
+    this._pending = this._pending || {};
+    this._pending[key] = on ? 'on' : 'off';
+    msg.textContent = `Đang gửi lệnh ${on ? 'bật' : 'tắt'} ${label}, chờ UPS xác nhận…`;
     try {
       await this._hass.callService('switch', on ? 'turn_on' : 'turn_off',
         { entity_id: eid });
-      msg.textContent = `Đã gửi. Chờ UPS xác nhận…`;
-      setTimeout(() => { if (msg.textContent.startsWith('Đã gửi')) msg.textContent = ''; }, 4000);
     } catch (e) {
+      delete this._pending[key];
       msg.textContent = `Lỗi: ${e.message || e}`;
+      this._update();
+      return;
     }
+    // UPS khong xac nhan trong 6s -> bo cho, tra o tick ve trang thai that
+    setTimeout(() => {
+      if (this._pending && this._pending[key] !== undefined) {
+        delete this._pending[key];
+        msg.textContent = `${label}: UPS không xác nhận — lệnh có thể bị từ chối.`;
+        this._update();
+      } else if (msg.textContent.startsWith('Đang gửi')) {
+        msg.textContent = `${label}: UPS đã xác nhận.`;
+        setTimeout(() => { if (msg.textContent.endsWith('đã xác nhận.')) msg.textContent = ''; }, 3000);
+      }
+    }, 6000);
   }
 
   /** Xoá nhật ký: ghi một mốc thời gian, panel chỉ hiện sự kiện sau mốc đó. */
