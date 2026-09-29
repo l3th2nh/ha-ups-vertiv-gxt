@@ -73,11 +73,15 @@ class UpsVoltronic : public PollingComponent, public uart::UARTDevice {
 #ifdef USE_SWITCH
   void set_eco_switch(switch_::Switch *s) { eco_sw_ = s; }
   void set_buzzer_switch(switch_::Switch *s) { buzzer_sw_ = s; }
+  void set_power_switch(switch_::Switch *s) { power_sw_ = s; }
 #endif
 
   /// Xep hang mot lenh ghi co (PEx / PDx). Gui o khe ranh giua hai vong doc,
   /// KHONG chen ngang luc dang cho phan hoi - lam vay se lam hong khung dang doc.
   void queue_flag(char flag, bool on);
+  /// Xep hang mot lenh tho bat ky (vi du "SON", "SOFF"). Cung duong di voi
+  /// queue_flag: chi gui o khe ranh giua hai vong doc.
+  void queue_cmd(const char *cmd);
 
  protected:
   // Trinh tu lenh chay tuan tu, moi vong update() bat dau lai tu dau
@@ -122,7 +126,7 @@ class UpsVoltronic : public PollingComponent, public uart::UARTDevice {
   bool     buzzer_on_{false};
 
   // --- hang doi lenh ghi (chi can mot cho: nguoi dung bam rat thua) ---
-  char     pending_[6]{0};
+  char     pending_[8]{0};
   bool     has_pending_{false};
   bool     write_round_{false};
 
@@ -166,6 +170,7 @@ class UpsVoltronic : public PollingComponent, public uart::UARTDevice {
 #ifdef USE_SWITCH
   switch_::Switch *eco_sw_{nullptr};
   switch_::Switch *buzzer_sw_{nullptr};
+  switch_::Switch *power_sw_{nullptr};
 #endif
 };
 
@@ -179,6 +184,14 @@ class UpsFlagSwitch : public switch_::Switch, public Parented<UpsVoltronic> {
  protected:
   void write_state(bool state) override { this->parent_->queue_flag(this->flag_, state); }
   char flag_{0};
+};
+
+/// Cong tac BAT/TAT ca may. Trang thai doc tu QMOD: 'S' (Standby) = dang tat.
+/// CANH BAO: tat may cat dien TOAN BO tai. Neu chinh mach ESP32 lay dien tu UPS
+/// thi no chet theo va khong con duong nao gui 'SON' de bat lai.
+class UpsPowerSwitch : public switch_::Switch, public Parented<UpsVoltronic> {
+ protected:
+  void write_state(bool state) override { this->parent_->queue_cmd(state ? "SON" : "SOFF"); }
 };
 #endif
 

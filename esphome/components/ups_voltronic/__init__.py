@@ -35,6 +35,8 @@ UpsVoltronic = ups_voltronic_ns.class_(
     "UpsVoltronic", cg.PollingComponent, uart.UARTDevice
 )
 UpsFlagSwitch = ups_voltronic_ns.class_("UpsFlagSwitch", switch.Switch, cg.Parented)
+UpsPowerSwitch = ups_voltronic_ns.class_("UpsPowerSwitch", switch.Switch, cg.Parented)
+CONF_UPS_POWER = "ups_power"
 
 # Cong tac co thiet bi: key YAML -> (setter C++, chu co trong QFLAG)
 #   e = ECO mode, a = Alarm Control (coi bao)
@@ -181,6 +183,7 @@ _schema = {
         cv.Optional(_k): switch.switch_schema(UpsFlagSwitch)
         for _k in FLAG_SWITCHES
     },
+    cv.Optional(CONF_UPS_POWER): switch.switch_schema(UpsPowerSwitch),
 }
 for _key, (_setter, _sch) in {**NUMERIC_SENSORS, **BINARY_SENSORS, **TEXT_SENSORS}.items():
     _schema[cv.Optional(_key)] = _sch
@@ -200,6 +203,11 @@ async def to_code(config):
     cg.add(var.set_rated_watts(config[CONF_RATED_WATTS]))
     cg.add(var.set_auto_baud(config[CONF_AUTO_BAUD]))
     cg.add(var.set_mode_interval(config[CONF_MODE_INTERVAL]))
+
+    if CONF_UPS_POWER in config:
+        pw = await switch.new_switch(config[CONF_UPS_POWER])
+        await cg.register_parented(pw, var)
+        cg.add(var.set_power_switch(pw))
 
     for key, (setter, flag) in FLAG_SWITCHES.items():
         if key in config:

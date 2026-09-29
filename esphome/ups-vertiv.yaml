@@ -143,6 +143,13 @@ ups_voltronic:
   buzzer:
     name: "Buzzer"
     restore_mode: DISABLED
+
+  # BAT/TAT ca may. Trang thai doc tu QMOD ('S' = Standby = dang tat).
+  # CANH BAO: tat may cat dien TOAN BO tai, ke ca chinh mach ESP32 neu no lay
+  # dien tu UPS - luc do khong con duong nao gui 'SON' de bat lai tu xa.
+  ups_power:
+    name: "UPS Power"
+    restore_mode: DISABLED
   on_battery:
     name: "On Battery"
   fault:

@@ -305,6 +305,27 @@ Không hỗ trợ: `QPIRI`, `QPIGS`, `QPGS0`, `QPRI`, `QBDR` — đều `(NAK`.
 > ghi nhầm là máy "không hỗ trợ `PEa`/`PDa`" — thực ra chỉ sai kiểu chữ, và nhầm
 > lẫn đó khiến cả tính năng điều khiển bị bỏ qua suốt một thời gian dài.
 
+## Lệnh BẬT / TẮT máy
+
+| Lệnh | Việc nó làm |
+|---|---|
+| **`SON`** | Bật UPS |
+| **`SOFF`** | Tắt UPS (về standby) |
+| `Sn` | Tắt sau `n` phút, **tự bật khi có điện lưới trở lại** |
+| `SnRm` | Tắt sau `n` phút, tự bật sau `m` phút |
+| `SnR0000` | Tắt và **ở yên đó** |
+| `CS` | Huỷ lệnh tắt đang chờ |
+
+Trạng thái bật/tắt đọc từ `QMOD`: **`S` = Standby** (đã tắt, không có điện ra).
+
+> ⚠️ **Standby vẫn sạc pin** — manual ghi *"UPS is powered off without output power,
+> but the battery still can be charged"*. Nghĩa là bo điều khiển vẫn sống và cổng
+> RS-232 vẫn đáp lệnh khi máy đã tắt.
+>
+> Nhưng **mạch ESP32 thì không**, nếu nó lấy điện từ đầu ra của UPS. Tắt máy là
+> mạch chết theo, và không còn đường nào gửi `SON` để bật lại. Muốn điều khiển
+> bật/tắt thật sự từ xa thì **mạch phải có nguồn riêng** — xem phần dưới.
+
 Ý nghĩa vài cờ đã giải mã trên máy này: `e` ECO · `a` còi báo · `r` tự khởi động
 lại khi có điện · `v` converter · `g` tự tắt khi không tải · `o` bypass khi UPS tắt.
 

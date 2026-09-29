@@ -59,6 +59,7 @@ void UpsVoltronic::dump_config() {
   // thay vi phai mo ma sinh ra moi biet chung co ton tai hay khong.
   if (this->eco_sw_)    LOG_SWITCH("  ", "ECO Mode", this->eco_sw_);
   if (this->buzzer_sw_) LOG_SWITCH("  ", "Buzzer", this->buzzer_sw_);
+  if (this->power_sw_)  LOG_SWITCH("  ", "UPS Power", this->power_sw_);
 #endif
 }
 
@@ -263,14 +264,24 @@ void UpsVoltronic::advance_() {
 
   Step next;
   if (this->write_round_) {
-    // Ghi xong -> doc QFLAG xac minh -> ket thuc
-    next = (this->step_ == STEP_WRITE) ? STEP_QFLAG : STEP_DONE;
+    // Ghi xong -> doc QMOD roi QFLAG de xac minh. Can ca hai vi lenh ghi co the
+    // doi CO thiet bi (PEE/PDA -> QFLAG) hoac doi CHE DO may (SON/SOFF -> QMOD).
+    if (this->step_ == STEP_WRITE)       next = STEP_QMOD;
+    else if (this->step_ == STEP_QMOD)   next = STEP_QFLAG;
+    else                                 next = STEP_DONE;
   } else {
     next = static_cast<Step>(this->step_ + 1);
     if (next > STEP_QFLAG) next = STEP_DONE;   // bo qua STEP_WRITE trong vong thuong
   }
   if (next >= STEP_DONE) this->finish_round_();
   else                   this->start_step_(next);
+}
+
+void UpsVoltronic::queue_cmd(const char *cmd) {
+  strncpy(this->pending_, cmd, sizeof(this->pending_) - 1);
+  this->pending_[sizeof(this->pending_) - 1] = 0;
+  this->has_pending_ = true;
+  ESP_LOGI(TAG, "Xep hang lenh: %s", this->pending_);
 }
 
 void UpsVoltronic::queue_flag(char flag, bool on) {
@@ -324,6 +335,10 @@ void UpsVoltronic::finish_round_() {
 // chuyen vong nhanh that bai lam doi baud lien tuc.
 void UpsVoltronic::publish_mode_() {
   if (!this->got_mode_) return;
+#ifdef USE_SWITCH
+  // 'S' = Standby: may da tat, khong co dien ra. Moi che do khac deu la dang bat.
+  if (this->power_sw_) this->power_sw_->publish_state(this->mode_ != 'S');
+#endif
   // Hoi moi giay nhung chi DAY khi mode thuc su doi. Text sensor cua ESPHome
   // goi notify_frontend_() vo dieu kien, khong tu loc trung -> khong loc o day
   // thi moi giay lai ban mot ban tin API vo ich.
@@ -365,6 +380,9 @@ void UpsVoltronic::publish_all_() {
     if (this->battery_level_) this->battery_level_->publish_state(this->batt_pct_);
     if (this->runtime_)       this->runtime_->publish_state(this->runtime_min_);
   }
+#endif
+#ifdef USE_SWITCH
+  if (this->power_sw_) this->power_sw_->publish_state(this->mode_ != 'S');
 #endif
 #ifdef USE_BINARY_SENSOR
   if (this->on_battery_) this->on_battery_->publish_state(this->mode_ == 'B');

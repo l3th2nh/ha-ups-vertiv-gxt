@@ -15,7 +15,7 @@
  * Chỉ đặt `prefix` khi muốn ép thủ công (ví dụ có 2 bộ UPS).
  */
 
-const UPS_CARD_VERSION = '4.5.2';
+const UPS_CARD_VERSION = '4.6.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -501,6 +501,7 @@ class UpsPanelCard extends HTMLElement {
         .mode-pill.eco  { background:rgba(3,169,244,.16);  color:#0277bd; }
         .mode-pill.warn { background:rgba(255,152,0,.18);  color:#e65100; }
         .mode-pill.bad  { background:rgba(244,67,54,.16);  color:#c62828; }
+        .row.danger { border-left:3px solid #f44336; padding-left:9px; }
         .ctl-note { min-height:1.1em; margin:2px 0 4px; }
         .row { display:flex; align-items:center; justify-content:space-between; gap:12px;
                padding:10px 12px; border-radius:8px; background:var(--secondary-background-color);
@@ -633,6 +634,15 @@ class UpsPanelCard extends HTMLElement {
             </div>
             <input type="checkbox" id="ctl-buzzer">
           </div>
+          <div class="row danger">
+            <div>
+              <div class="lb">Bật / tắt UPS</div>
+              <div class="hint">Tắt sẽ <b>cắt điện toàn bộ tải</b>. Nếu mạch giám sát
+                đang lấy điện từ chính UPS thì nó chết theo — và <b>không còn đường
+                nào bật lại từ xa</b>, phải ra tận nơi bấm nút trên máy.</div>
+            </div>
+            <input type="checkbox" id="ctl-power">
+          </div>
           <div class="hint ctl-note" id="ctl-msg"></div>
 
           <div class="sec">Cảnh báo</div>
@@ -706,6 +716,17 @@ class UpsPanelCard extends HTMLElement {
       this._toggleSwitch('eco_mode', ev.target.checked, 'Chế độ ECO'));
     $('ctl-buzzer').addEventListener('change', (ev) =>
       this._toggleSwitch('buzzer', ev.target.checked, 'Còi báo'));
+    $('ctl-power').addEventListener('change', (ev) => {
+      const on = ev.target.checked;
+      if (!on) {
+        const warn = 'TẮT UPS sẽ cắt điện toàn bộ thiết bị đang cắm trên nó. '
+          + 'Nếu mạch giám sát cũng lấy điện từ UPS thì nó sẽ mất kết nối và '
+          + 'KHÔNG THỂ bật lại từ Home Assistant — phải ra tận nơi bấm nút. '
+          + 'Bạn chắc chắn muốn tắt?';
+        if (!confirm(warn)) { this._update(); return; }   // huỷ -> trả ô tick về
+      }
+      this._toggleSwitch('ups_power', on, 'UPS');
+    });
     this._built = true;
   }
 
@@ -747,7 +768,8 @@ class UpsPanelCard extends HTMLElement {
       if (mh) mh.textContent = hint;
     }
     this._pending = this._pending || {};
-    for (const [key, id] of [['eco_mode', 'ctl-eco'], ['buzzer', 'ctl-buzzer']]) {
+    for (const [key, id] of [['eco_mode', 'ctl-eco'], ['buzzer', 'ctl-buzzer'],
+                             ['ups_power', 'ctl-power']]) {
       const el = $(id);
       if (!el) continue;
       const st = this._state('switch', key);
