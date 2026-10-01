@@ -55,6 +55,7 @@ DEFAULT_CONFIG = {
     # thang / nam" do HA tu tinh tu thong ke dai han, khong phu thuoc cloud.
     "power_entity": "",      # sensor cong suat (W)
     "energy_entity": "",     # sensor nang luong tich luy (kWh)
+    "plug_entity": "",       # switch o cam, de bat/tat ngay tren panel
     "price_kwh": 3000,       # dong/kWh, de quy ra tien
 }
 

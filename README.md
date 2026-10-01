@@ -259,9 +259,22 @@ thiếu đúng phần quan trọng nhất là tổn hao của chính cái UPS (q
 thứ chạy 24/7 và chiếm phần lớn hoá đơn khi tải nhẹ.
 
 Cách đo đúng là **đặt một ổ cắm thông minh ở phía đầu vào** và đọc nó. Panel → tab
-**Cài đặt** → mục *Đo tiêu thụ điện* → chọn cảm biến công suất (W) và cảm biến năng
-lượng (kWh) của ổ cắm đó, điền giá điện → **Lưu**. Số liệu hiện ở tab **Thông tin**:
+**Cài đặt** → mục *Đo tiêu thụ điện* → chọn cảm biến công suất (W), cảm biến năng lượng
+(kWh) và công tắc của ổ cắm đó, điền giá điện → **Lưu**. Số liệu hiện ở tab **Thông tin**:
 đang rút · hôm nay · tháng này · năm nay, kèm quy ra tiền.
+
+Chọn công tắc thì khối **Điều khiển UPS** có thêm một công tắc **bật/tắt ổ cắm**. Nó khác
+`SOFF` ở một điểm quyết định:
+
+| | Tắt UPS (`SOFF`) | Tắt ổ cắm |
+|---|---|---|
+| Tải | mất điện ngay | vẫn có điện, UPS chạy pin |
+| Bật lại từ HA | **không được** — mạch ESP32 chết theo | **được** — ổ cắm có điện và WiFi riêng |
+| Rủi ro nếu quên | tải dừng ngay | UPS cạn pin rồi tắt, tải dừng sau |
+
+Ổ cắm tắt thì mọi con số tiêu thụ đứng im và `đang rút` về 0 W, nên panel hiện thẳng dòng
+đỏ *"Ổ cắm đang TẮT — UPS không có điện lưới và đang chạy bằng pin"* thay vì để người đọc
+tự đoán.
 
 Vài điểm đáng biết:
 
@@ -425,7 +438,7 @@ Lệnh serial (đã kiểm chứng): `QSK1` đọc trạng thái, **`SKON1`** b�
 
 # 6. Còi báo — điều khiển được qua serial
 
-Panel có ô tick **Còi báo** ở tab Cài đặt, dùng cờ `A` của `QFLAG`:
+Panel có công tắc **Còi báo** ở tab Cài đặt, dùng cờ `A` của `QFLAG`:
 
 | Lệnh | Phản hồi | Việc nó làm |
 |---|---|---|

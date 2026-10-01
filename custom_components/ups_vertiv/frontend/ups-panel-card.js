@@ -15,7 +15,10 @@
  * Chỉ đặt `prefix` khi muốn ép thủ công (ví dụ có 2 bộ UPS).
  */
 
-const UPS_CARD_VERSION = '4.7.0';
+// Ky tu xuong dong cho hop thoai confirm. Viet bang fromCharCode vi chuoi
+// escape tung bi cong cu ghi file bien thanh xuong dong THAT, lam vo cu phap.
+const BR = String.fromCharCode(10);
+const UPS_CARD_VERSION = '4.8.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -332,16 +335,17 @@ class UpsPanelCard extends HTMLElement {
     this._cfgLoading = false;
   }
 
-  /** Mọi sensor trong HA mang đúng device_class, để người dùng chọn trong danh sách. */
-  _entityChoices(deviceClass) {
+  /** Entity trong một domain, lọc theo device_class nếu có, để đổ vào danh sách chọn. */
+  _entityChoices(domain, deviceClass) {
     const out = [];
     for (const id of Object.keys(this._hass.states)) {
-      if (!id.startsWith('sensor.')) continue;
+      if (!id.startsWith(`${domain}.`)) continue;
       const a = this._hass.states[id].attributes || {};
-      if (a.device_class !== deviceClass) continue;
-      out.push({ id, name: a.friendly_name || id });
+      if (deviceClass && a.device_class !== deviceClass) continue;
+      out.push({ id, name: a.friendly_name || id, outlet: a.device_class === 'outlet' });
     }
-    out.sort((x, y) => x.name.localeCompare(y.name, 'vi'));
+    // Ổ cắm lên trước: nhà có thể có hàng chục switch, phần lớn không liên quan
+    out.sort((x, y) => (y.outlet - x.outlet) || x.name.localeCompare(y.name, 'vi'));
     return out;
   }
 
@@ -460,7 +464,7 @@ class UpsPanelCard extends HTMLElement {
   }
 
   _paintEnergy() {
-    if (!this._built) return;
+    if (!this._built || !this._hass) return;
     const $ = (id) => this.shadowRoot.getElementById(id);
     if (!$('pw-today')) return;
     const c = this._cfg || {};
@@ -476,6 +480,21 @@ class UpsPanelCard extends HTMLElement {
 
     const note = $('pw-note');
     if (!note) return;
+    note.className = 'hint';
+
+    // Ổ cắm bị tắt là lý do số 1 khiến mọi con số ở trên đứng im. Nói thẳng ra,
+    // đừng để người đọc tự đoán vì sao "đang rút" lại là 0 W.
+    const plugEnt = c.plug_entity || '';
+    const plugSt = plugEnt && this._hass.states[plugEnt]
+      ? this._hass.states[plugEnt].state : null;
+    if (plugSt === 'off') {
+      note.className = 'hint alert';
+      note.style.display = '';
+      note.textContent = 'Ổ cắm đang TẮT — UPS không có điện lưới và đang chạy bằng '
+        + 'pin. Bật lại ở tab Cài đặt, khối Điều khiển UPS.';
+      return;
+    }
+
     if (!c.energy_entity) {
       note.style.display = '';
       note.textContent = 'Chọn thêm cảm biến năng lượng (kWh) trong tab Cài đặt '
@@ -549,10 +568,12 @@ class UpsPanelCard extends HTMLElement {
     $('set-warn-at').value = c.batt_warn_at ?? 50;
     $('set-crit-at').value = c.batt_crit_at ?? 25;
 
-    this._fillSelect($('set-pw-power'), this._entityChoices('power'),
+    this._fillSelect($('set-pw-power'), this._entityChoices('sensor', 'power'),
       c.power_entity || '', '— không đo —');
-    this._fillSelect($('set-pw-energy'), this._entityChoices('energy'),
+    this._fillSelect($('set-pw-energy'), this._entityChoices('sensor', 'energy'),
       c.energy_entity || '', '— không đo —');
+    this._fillSelect($('set-pw-plug'), this._entityChoices('switch'),
+      c.plug_entity || '', '— không điều khiển —');
     $('set-price').value = c.price_kwh ?? 3000;
   }
 
@@ -576,6 +597,7 @@ class UpsPanelCard extends HTMLElement {
       offline_after: Number($('set-offline-after').value) || 3,
       power_entity: $('set-pw-power').value,
       energy_entity: $('set-pw-energy').value,
+      plug_entity: $('set-pw-plug').value,
       price_kwh: Number($('set-price').value) || 0,
     };
   }
@@ -731,7 +753,28 @@ class UpsPanelCard extends HTMLElement {
         }
         .row select { flex:1 1 240px; min-width:0; }
         .row input[type=number] { width:64px; }
-        .row input[type=checkbox] { width:18px; height:18px; flex:0 0 auto; cursor:pointer; }
+        /* Cong tac truot. Khong dung ::before trucc tiep tren <input> vi Firefox
+           khong dung pseudo-element tren input; boc trong <label> thi chay moi noi. */
+        .sw { position:relative; display:inline-block; width:44px; height:24px;
+              flex:0 0 auto; cursor:pointer; }
+        .sw input { position:absolute; inset:0; width:100%; height:100%; margin:0;
+                    opacity:0; cursor:pointer; }
+        .sw .sl { position:absolute; inset:0; border-radius:999px; transition:background .18s;
+                  background:var(--switch-unchecked-track-color, rgba(130,130,130,.45)); }
+        .sw .sl::before { content:''; position:absolute; top:2px; left:2px;
+                  width:20px; height:20px; border-radius:50%;
+                  background:var(--switch-unchecked-button-color, #fafafa);
+                  box-shadow:0 1px 3px rgba(0,0,0,.35);
+                  transition:transform .18s, background .18s; }
+        .sw input:checked + .sl { background:var(--switch-checked-track-color, rgba(3,169,244,.5)); }
+        .sw input:checked + .sl::before { transform:translateX(20px);
+                  background:var(--switch-checked-button-color, var(--primary-color, #03a9f4)); }
+        .sw input:focus-visible + .sl { outline:2px solid var(--primary-color, #03a9f4);
+                  outline-offset:2px; }
+        /* Hang nguy hiem: bat len la mau do, de khong bao gio bam nham ma khong thay */
+        .row.danger .sw input:checked + .sl { background:rgba(244,67,54,.45); }
+        .row.danger .sw input:checked + .sl::before { background:#f44336; }
+        .hint.alert { color:#c62828; font-weight:600; }
         .sect { font-size:.72rem; font-weight:700; color:var(--secondary-text-color);
                 margin:16px 0 8px; letter-spacing:.03em; }
         .btns { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
@@ -853,7 +896,7 @@ class UpsPanelCard extends HTMLElement {
                 lưới lệch khỏi ngưỡng cho phép — lúc đó ô này vẫn bật nhưng
                 <b>Chế độ đang chạy</b> ở trên sẽ hiện <code>Line</code>.</div>
             </div>
-            <input type="checkbox" id="ctl-eco">
+            <label class="sw"><input type="checkbox" id="ctl-eco"><span class="sl"></span></label>
           </div>
           <div class="row">
             <div>
@@ -861,7 +904,7 @@ class UpsPanelCard extends HTMLElement {
               <div class="hint">Cảnh báo tại chỗ khi mất điện — không phụ thuộc WiFi
                 hay điện thoại.</div>
             </div>
-            <input type="checkbox" id="ctl-buzzer">
+            <label class="sw"><input type="checkbox" id="ctl-buzzer"><span class="sl"></span></label>
           </div>
           <div class="row danger">
             <div>
@@ -870,7 +913,17 @@ class UpsPanelCard extends HTMLElement {
                 đang lấy điện từ chính UPS thì nó chết theo — và <b>không còn đường
                 nào bật lại từ xa</b>, phải ra tận nơi bấm nút trên máy.</div>
             </div>
-            <input type="checkbox" id="ctl-power">
+            <label class="sw"><input type="checkbox" id="ctl-power"><span class="sl"></span></label>
+          </div>
+          <div class="row danger" id="ctl-plug-row" style="display:none">
+            <div>
+              <div class="lb">Ổ cắm cấp điện lưới cho UPS</div>
+              <div class="hint">Tắt là <b>cắt điện lưới vào UPS</b> — UPS chuyển sang
+                chạy pin và sẽ cạn pin rồi tắt nếu để lâu.<br>
+                Khác với <b>Bật / tắt UPS</b> ở trên: ổ cắm lấy điện và WiFi độc lập
+                với UPS, nên <b>bật lại từ đây lúc nào cũng được</b>.</div>
+            </div>
+            <label class="sw"><input type="checkbox" id="ctl-plug"><span class="sl"></span></label>
           </div>
           <div class="hint ctl-note" id="ctl-msg"></div>
 
@@ -885,6 +938,14 @@ class UpsPanelCard extends HTMLElement {
           <div class="row">
             <div class="lb">Cảm biến năng lượng</div>
             <select id="set-pw-energy"></select>
+          </div>
+          <div class="row">
+            <div>
+              <div class="lb">Công tắc ổ cắm</div>
+              <div class="hint">Chọn để có công tắc bật/tắt ổ cắm ngay trong khối
+                <b>Điều khiển UPS</b> ở trên.</div>
+            </div>
+            <select id="set-pw-plug"></select>
           </div>
           <div class="row">
             <div class="lb">Giá điện (đ/kWh)</div>
@@ -973,6 +1034,18 @@ class UpsPanelCard extends HTMLElement {
       }
       this._toggleSwitch('ups_power', on, 'UPS');
     });
+    $('ctl-plug').addEventListener('change', (ev) => {
+      const on = ev.target.checked;
+      const eid = (this._cfg || {}).plug_entity || '';
+      if (!on) {
+        const warn = 'TẮT Ổ CẮM sẽ cắt điện lưới vào UPS. UPS chuyển sang chạy pin '
+          + 'và sẽ cạn pin rồi tắt nếu để lâu — kéo theo toàn bộ tải đang cắm.'
+          + BR + BR
+          + 'Bật lại từ đây vẫn được (ổ cắm không phụ thuộc UPS). Chắc chắn tắt?';
+        if (!confirm(warn)) { this._update(); return; }   // huỷ -> trả công tắc về
+      }
+      this._toggleSwitch('plug', on, 'Ổ cắm', eid);
+    });
     this._built = true;
   }
 
@@ -1014,11 +1087,20 @@ class UpsPanelCard extends HTMLElement {
       if (mh) mh.textContent = hint;
     }
     this._pending = this._pending || {};
-    for (const [key, id] of [['eco_mode', 'ctl-eco'], ['buzzer', 'ctl-buzzer'],
-                             ['ups_power', 'ctl-power']]) {
+    // Ba công tắc đầu là entity của ESPHome, dò theo tiền tố. Ổ cắm thì không:
+    // entity của nó do người dùng chọn trong Cài đặt nên truyền thẳng id vào.
+    const plugEnt = (this._cfg || {}).plug_entity || '';
+    const plugRow = $('ctl-plug-row');
+    if (plugRow) plugRow.style.display = plugEnt ? '' : 'none';
+    const CONTROLS = [['eco_mode', 'ctl-eco', null], ['buzzer', 'ctl-buzzer', null],
+                      ['ups_power', 'ctl-power', null]];
+    if (plugEnt) CONTROLS.push(['plug', 'ctl-plug', plugEnt]);
+    for (const [key, id, explicit] of CONTROLS) {
       const el = $(id);
       if (!el) continue;
-      const st = this._state('switch', key);
+      const st = explicit
+        ? (this._hass.states[explicit] ? this._hass.states[explicit].state : null)
+        : this._state('switch', key);
       // Đang chờ UPS xác nhận thì KHÔNG ghi đè ô tick, nếu không nó sẽ bật lại
       // ngay khi vừa bấm và trông như "không bấm được".
       if (this._pending[key] !== undefined) {
@@ -1147,22 +1229,31 @@ class UpsPanelCard extends HTMLElement {
    *  KHÔNG tự đổi ô tick: trạng thái thật do thiết bị công bố sau khi UPS xác
    *  nhận bằng QFLAG. Nếu UPS từ chối, ô tick sẽ tự quay về đúng thực tế.
    */
-  async _toggleSwitch(key, on, label) {
+  async _toggleSwitch(key, on, label, explicitId) {
     const msg = this.shadowRoot.getElementById('ctl-msg');
-    const eid = this._id('switch', key);
+    const eid = explicitId || this._id('switch', key);
 
     if (!this._hass || !this._hass.states[eid]) {
-      // Noi ro ten entity da tim, de doi chieu duoc ngay trong Developer Tools
-      msg.innerHTML = `Không tìm thấy <code>${eid}</code>.<br>` +
-        `Vào <b>Cài đặt → Thiết bị &amp; Dịch vụ → ESPHome → ⋮ → Tải lại</b>, ` +
-        `rồi <b>Ctrl+F5</b>.`;
+      // Noi ro ten entity da tim, de doi chieu duoc ngay trong Developer Tools.
+      // Huong dan khac nhau theo nguon entity: entity cua ESPHome thi tai lai
+      // tich hop, con entity do nguoi dung tu chon thi phai chon lai cho dung.
+      const how = explicitId
+        ? `Entity này do bạn chọn ở <b>Cài đặt → Đo tiêu thụ điện</b>. ` +
+          `Có thể nó đã bị đổi tên hoặc xoá — chọn lại rồi <b>Lưu</b>.`
+        : `Vào <b>Cài đặt → Thiết bị &amp; Dịch vụ → ESPHome → ⋮ → Tải lại</b>, ` +
+          `rồi <b>Ctrl+F5</b>.`;
+      msg.innerHTML = `Không tìm thấy <code>${eid}</code>.<br>` + how;
       this._update();          // tra o tick ve dung thuc te
       return;
     }
 
+    // "Ai xac nhan" khac nhau: cong tac cua UPS do UPS tra loi qua QFLAG/QMOD,
+    // con o cam thong minh thi do chinh no bao ve. Dung chu chung cho dung ca hai.
+    const who = explicitId ? 'xác nhận' : 'UPS xác nhận';
+
     this._pending = this._pending || {};
     this._pending[key] = on ? 'on' : 'off';
-    msg.textContent = `Đang gửi lệnh ${on ? 'bật' : 'tắt'} ${label}, chờ UPS xác nhận…`;
+    msg.textContent = `Đang gửi lệnh ${on ? 'bật' : 'tắt'} ${label}, chờ ${who}…`;
     try {
       await this._hass.callService('switch', on ? 'turn_on' : 'turn_off',
         { entity_id: eid });
@@ -1172,14 +1263,14 @@ class UpsPanelCard extends HTMLElement {
       this._update();
       return;
     }
-    // UPS khong xac nhan trong 6s -> bo cho, tra o tick ve trang thai that
+    // Khong xac nhan trong 6s -> bo cho, tra cong tac ve trang thai that
     setTimeout(() => {
       if (this._pending && this._pending[key] !== undefined) {
         delete this._pending[key];
-        msg.textContent = `${label}: UPS không xác nhận — lệnh có thể bị từ chối.`;
+        msg.textContent = `${label}: không nhận được xác nhận — lệnh có thể bị từ chối.`;
         this._update();
       } else if (msg.textContent.startsWith('Đang gửi')) {
-        msg.textContent = `${label}: UPS đã xác nhận.`;
+        msg.textContent = `${label}: đã xác nhận.`;
         setTimeout(() => { if (msg.textContent.endsWith('đã xác nhận.')) msg.textContent = ''; }, 3000);
       }
     }, 6000);
