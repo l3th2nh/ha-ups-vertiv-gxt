@@ -18,7 +18,7 @@
 // Ky tu xuong dong cho hop thoai confirm. Viet bang fromCharCode vi chuoi
 // escape tung bi cong cu ghi file bien thanh xuong dong THAT, lam vo cu phap.
 const BR = String.fromCharCode(10);
-const UPS_CARD_VERSION = '4.8.0';
+const UPS_CARD_VERSION = '4.9.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -304,12 +304,13 @@ class UpsPanelCard extends HTMLElement {
   _setTab(tab) {
     this._tab = tab;
     const $ = (id) => this.shadowRoot.getElementById(id);
-    for (const t of ['info', 'log', 'set']) {
+    for (const t of ['info', 'pw', 'log', 'set']) {
       $(`tab-${t}`).className = 'tab' + (tab === t ? ' sel' : '');
       $(`pane-${t}`).style.display = tab === t ? 'block' : 'none';
     }
     if (tab === 'set') this._loadSettings();
     if (tab === 'log') this._loadLog();
+    if (tab === 'pw') this._loadReport();
     this._update();
   }
 
@@ -329,6 +330,8 @@ class UpsPanelCard extends HTMLElement {
       const res = await this._hass.callWS({ type: 'ups_vertiv/get' });
       this._cfg = res.config || {};
       this._updatePower();
+      // Mở panel ngay vào tab Tiêu thụ thì lúc đó cấu hình chưa về kịp
+      if (this._tab === 'pw') this._loadReport();
     } catch (e) {
       /* bỏ qua: khối tiêu thụ ẩn, phần còn lại của card vẫn chạy */
     }
@@ -514,6 +517,317 @@ class UpsPanelCard extends HTMLElement {
     }
   }
 
+  // ------------------------------------------------ báo cáo theo kỳ ---
+
+  /** Mốc đầu/cuối của kỳ đang xem, cộng mốc để nhảy sang kỳ trước / sau. */
+  _rptBounds(mode, ref) {
+    const y = ref.getFullYear();
+    const m = ref.getMonth();
+    const d = ref.getDate();
+    if (mode === 'day') {
+      return { start: new Date(y, m, d), end: new Date(y, m, d + 1),
+               prev: new Date(y, m, d - 1), next: new Date(y, m, d + 1) };
+    }
+    if (mode === 'month') {
+      return { start: new Date(y, m, 1), end: new Date(y, m + 1, 1),
+               prev: new Date(y, m - 1, 1), next: new Date(y, m + 1, 1) };
+    }
+    return { start: new Date(y, 0, 1), end: new Date(y + 1, 0, 1),
+             prev: new Date(y - 1, 0, 1), next: new Date(y + 1, 0, 1) };
+  }
+
+  _rptStep(dir) {
+    const b = this._rptBounds(this._rptMode || 'day', this._rptRef || new Date());
+    const target = dir < 0 ? b.prev : b.next;
+    if (dir > 0 && target > new Date()) return;   // không đi vào tương lai
+    this._rptRef = target;
+    this._rptSel = null;
+    this._loadReport();
+  }
+
+  /**
+   * Đọc thống kê thô trong một khoảng.
+   *
+   * `start`/`end` trong phản hồi của Home Assistant là **số milli-giây** từ bản
+   * 2023.3, nhưng các bản trước trả chuỗi ISO. Phải nhận cả hai, nếu không biểu
+   * đồ sẽ trống trơn trên đúng một nửa số bản HA.
+   */
+  async _statRows(ent, start, end, period) {
+    const res = await this._hass.callWS({
+      type: 'recorder/statistics_during_period',
+      start_time: start.toISOString(),
+      end_time: end.toISOString(),
+      statistic_ids: [ent],
+      period,
+      types: ['change'],
+    });
+    const rows = (res && res[ent]) || [];
+    return rows.map((r) => ({
+      t: typeof r.start === 'number' ? r.start : Date.parse(r.start),
+      v: (r.change === null || r.change === undefined) ? null : Number(r.change),
+    })).filter((r) => Number.isFinite(r.t));
+  }
+
+  async _statSum(ent, start, end, period) {
+    const rows = await this._statRows(ent, start, end, period);
+    let sum = 0;
+    let seen = false;
+    for (const r of rows) {
+      if (!Number.isFinite(r.v)) continue;
+      sum += r.v;
+      seen = true;
+    }
+    return seen ? sum : null;
+  }
+
+  /**
+   * Nạp báo cáo cho kỳ đang chọn.
+   *
+   * Chu kỳ thống kê chọn theo chế độ: giờ cho biểu đồ ngày, ngày cho biểu đồ
+   * tháng, tháng cho biểu đồ năm.
+   *
+   * Riêng ô của kỳ ĐANG CHẠY phải vá lại bằng dữ liệu mịn hơn. Thống kê theo
+   * giờ chỉ chốt khi hết giờ, nên cột hôm nay trong biểu đồ tháng sẽ thiếu đúng
+   * phần giờ hiện tại — và lệch với con số "Hôm nay" ở tab Thông tin, thứ lấy
+   * từ chu kỳ 5 phút. Lệch số giữa hai tab là loại lỗi làm người dùng mất tin
+   * vào cả hai, nên vá luôn.
+   */
+  async _loadReport() {
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    if (!this._built || !this._hass) return;
+    this._rptMode = this._rptMode || 'day';
+    this._rptRef = this._rptRef || new Date();
+    const mode = this._rptMode;
+
+    for (const m of ['day', 'month', 'year']) {
+      const el = $(`pw-m-${m}`);
+      if (el) el.className = 'seg-b' + (m === mode ? ' sel' : '');
+    }
+
+    const ent = (this._cfg || {}).energy_entity || '';
+    if (!ent) {
+      this._rptData = null;
+      this._paintReport();
+      return;
+    }
+
+    const b = this._rptBounds(mode, this._rptRef);
+    const now = new Date();
+    const isCurrent = now >= b.start && now < b.end;
+    const key = `${ent}|${mode}|${b.start.getTime()}`;
+
+    // Kỳ đã khép lại thì số không bao giờ đổi -> nhớ luôn, không hỏi lại
+    const cache = (this._rptCache = this._rptCache || {});
+    const hit = cache[key];
+    if (hit && (!isCurrent || Date.now() - hit.at < 60000)) {
+      this._rptData = hit.data;
+      this._rptErr = null;
+      this._paintReport();
+      return;
+    }
+
+    $('pw-r-note').className = 'hint';
+    $('pw-r-note').textContent = 'Đang đọc thống kê…';
+
+    const period = mode === 'day' ? 'hour' : (mode === 'month' ? 'day' : 'month');
+    const nBuckets = mode === 'day' ? 24
+      : (mode === 'month'
+          ? new Date(b.start.getFullYear(), b.start.getMonth() + 1, 0).getDate()
+          : 12);
+    const idxOf = mode === 'day' ? ((x) => x.getHours())
+      : (mode === 'month' ? ((x) => x.getDate() - 1) : ((x) => x.getMonth()));
+
+    try {
+      // Biểu đồ ngày của hôm nay: dùng luôn chu kỳ 5 phút rồi tự gộp vào giờ,
+      // để cột giờ hiện tại không bị trống cho tới khi hết giờ.
+      const finePeriod = (mode === 'day' && isCurrent) ? '5minute' : period;
+      const rows = await this._statRows(ent, b.start, b.end, finePeriod);
+
+      const vals = new Array(nBuckets).fill(null);
+      for (const r of rows) {
+        if (!Number.isFinite(r.v)) continue;
+        const i = idxOf(new Date(r.t));
+        if (i < 0 || i >= nBuckets) continue;
+        vals[i] = (vals[i] || 0) + r.v;
+      }
+
+      // Vá ô của kỳ đang chạy bằng dữ liệu mịn hơn (xem chú thích hàm)
+      if (isCurrent && mode === 'month') {
+        const d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const fine = await this._statSum(ent, d0, now, '5minute');
+        if (fine !== null) vals[now.getDate() - 1] = fine;
+      } else if (isCurrent && mode === 'year') {
+        const m0 = new Date(now.getFullYear(), now.getMonth(), 1);
+        const fine = await this._statSum(ent, m0, now, 'day');
+        if (fine !== null) vals[now.getMonth()] = fine;
+      }
+
+      // Tổng kỳ trước, để so sánh. Không có chu kỳ 'year' nên năm thì cộng từ tháng.
+      //
+      // Kỳ ĐANG CHẠY phải so với ĐÚNG PHẦN TƯƠNG ỨNG của kỳ trước, không phải cả
+      // kỳ. So nửa ngày với cả ngày thì lúc nào cũng ra "giảm 50%" — một con số
+      // xanh lè vô nghĩa, dễ hiểu thành đã tiết kiệm được.
+      //
+      // Mốc cắt làm tròn xuống về biên của chu kỳ đang dùng, để tổng luôn là
+      // những ô trọn vẹn: recorder không cắt đôi một ô bao giờ.
+      const pb = this._rptBounds(mode, b.prev);
+      let pEnd = pb.end;
+      let prevPeriod = mode === 'day' ? 'day' : 'month';
+      if (isCurrent) {
+        prevPeriod = mode === 'day' ? 'hour' : (mode === 'month' ? 'day' : 'month');
+        const py = pb.start.getFullYear();
+        const pm = pb.start.getMonth();
+        if (mode === 'day') {
+          pEnd = new Date(py, pm, pb.start.getDate(), now.getHours());
+        } else if (mode === 'month') {
+          const dim = new Date(py, pm + 1, 0).getDate();
+          pEnd = new Date(py, pm, Math.min(now.getDate(), dim));
+        } else {
+          pEnd = new Date(py, now.getMonth(), 1);
+        }
+      }
+      const prev = pEnd > pb.start
+        ? await this._statSum(ent, pb.start, pEnd, prevPeriod) : null;
+
+      let total = null;
+      for (const v of vals) if (Number.isFinite(v)) total = (total || 0) + v;
+
+      const data = { mode, start: b.start.getTime(), vals, total, prev, isCurrent,
+                     partial: isCurrent };
+      cache[key] = { at: Date.now(), data };
+      this._rptData = data;
+      this._rptErr = null;
+    } catch (e) {
+      this._rptData = null;
+      this._rptErr = e.message || String(e);
+    }
+    this._paintReport();
+  }
+
+  /** Nhãn kỳ đang xem, ví dụ 'Hôm nay · 01/10/2026' hay 'Tháng 10/2026'. */
+  _rptLabel(mode, ref) {
+    const p = (n) => String(n).padStart(2, '0');
+    const now = new Date();
+    if (mode === 'year') {
+      const tag = ref.getFullYear() === now.getFullYear() ? 'Năm nay · ' : '';
+      return `${tag}Năm ${ref.getFullYear()}`;
+    }
+    if (mode === 'month') {
+      const same = ref.getFullYear() === now.getFullYear() && ref.getMonth() === now.getMonth();
+      return `${same ? 'Tháng này · ' : ''}Tháng ${ref.getMonth() + 1}/${ref.getFullYear()}`;
+    }
+    const mid = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((mid(now) - mid(ref)) / 86400000);
+    const THU = ['Chủ nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+    const tag = diff === 0 ? 'Hôm nay' : (diff === 1 ? 'Hôm qua' : THU[ref.getDay()]);
+    return `${tag} · ${p(ref.getDate())}/${p(ref.getMonth() + 1)}/${ref.getFullYear()}`;
+  }
+
+  /** Mô tả một cột, dùng cho tooltip và dòng chi tiết khi bấm. */
+  _rptBucketLabel(mode, start, i) {
+    const d = new Date(start);
+    if (mode === 'day') return `${i}:00–${i + 1}:00`;
+    if (mode === 'month') return `Ngày ${i + 1}/${d.getMonth() + 1}`;
+    return `Tháng ${i + 1}/${d.getFullYear()}`;
+  }
+
+  _paintReport() {
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    if (!this._built || !$('pw-chart')) return;
+    const mode = this._rptMode || 'day';
+    const ref = this._rptRef || new Date();
+    const price = Number((this._cfg || {}).price_kwh) || 0;
+
+    $('pw-label').textContent = this._rptLabel(mode, ref);
+    $('pw-next').disabled = this._rptBounds(mode, ref).next > new Date();
+
+    const d = this._rptData;
+    const ent = (this._cfg || {}).energy_entity || '';
+    if (!ent || !d) {
+      $('pw-chart').innerHTML = '';
+      $('pw-axis').innerHTML = '';
+      $('pw-r-pick').textContent = '';
+      for (const id of ['pw-r-total', 'pw-r-delta', 'pw-r-peak']) $(id).textContent = '--';
+      for (const id of ['pw-r-cost', 'pw-r-prev', 'pw-r-peak-at']) $(id).textContent = '';
+      $('pw-r-note').className = 'hint';
+      $('pw-r-note').textContent = !ent
+        ? 'Chưa chọn cảm biến năng lượng. Vào tab Cài đặt, mục Đo tiêu thụ điện.'
+        : (this._rptErr
+            ? 'Không đọc được thống kê: ' + this._rptErr
+            : 'Chưa có dữ liệu cho kỳ này.');
+      return;
+    }
+
+    // --- ba ô tổng kết ---
+    $('pw-r-total').textContent = fmtKwh(d.total);
+    $('pw-r-cost').textContent = (price && Number.isFinite(d.total)) ? fmtVnd(d.total * price) : '';
+
+    const delta = $('pw-r-delta');
+    if (Number.isFinite(d.total) && Number.isFinite(d.prev) && d.prev > 0) {
+      const pct = (d.total - d.prev) / d.prev * 100;
+      const up = pct >= 0;
+      delta.className = 'v ' + (up ? 'up' : 'down');
+      delta.textContent = `${up ? '+' : ''}${pct.toFixed(0)}%`;
+    } else {
+      delta.className = 'v';
+      delta.textContent = '--';
+    }
+    // Nói rõ đang so với cái gì: cả kỳ trước, hay chỉ phần tương ứng của nó.
+    $('pw-r-prev').textContent = Number.isFinite(d.prev)
+      ? `${d.partial ? 'cùng kỳ' : 'kỳ trước'} ${fmtKwh(d.prev)}`
+      : (d.partial ? 'chưa đủ dữ liệu để so sánh' : 'không có kỳ trước');
+
+    let peakI = -1;
+    let peak = -1;
+    d.vals.forEach((v, i) => { if (Number.isFinite(v) && v > peak) { peak = v; peakI = i; } });
+    $('pw-r-peak').textContent = peakI < 0 ? '--' : fmtKwh(peak);
+    $('pw-r-peak-at').textContent = peakI < 0 ? '' : this._rptBucketLabel(mode, d.start, peakI);
+
+    // --- biểu đồ ---
+    const max = peak > 0 ? peak : 1;
+    const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    $('pw-chart').innerHTML = d.vals.map((v, i) => {
+      const h = Number.isFinite(v) ? Math.max(1, Math.round(v / max * 100)) : 1;
+      const cls = 'col' + (Number.isFinite(v) ? '' : ' empty') + (this._rptSel === i ? ' sel' : '');
+      const tip = `${this._rptBucketLabel(mode, d.start, i)}: `
+        + (Number.isFinite(v) ? fmtKwh(v) : 'không có dữ liệu');
+      return `<div class="${cls}" data-i="${i}" title="${esc(tip)}"><i style="height:${h}%"></i></div>`;
+    }).join('');
+    for (const el of $('pw-chart').querySelectorAll('.col')) {
+      el.addEventListener('click', () => {
+        const i = Number(el.getAttribute('data-i'));
+        this._rptSel = this._rptSel === i ? null : i;
+        this._paintReport();
+      });
+    }
+
+    // Nhãn trục X thưa dần theo số cột, nếu không thì chữ chồng lên nhau
+    const every = mode === 'day' ? 3 : (mode === 'month' ? 5 : 1);
+    $('pw-axis').innerHTML = d.vals.map((v, i) => {
+      const n = mode === 'day' ? i : i + 1;
+      const show = mode === 'month' ? (i === 0 || (i + 1) % every === 0) : (i % every === 0);
+      return `<div>${show ? n : ''}</div>`;
+    }).join('');
+
+    // --- dòng chi tiết khi bấm vào một cột ---
+    const sel = this._rptSel;
+    if (sel === null || sel === undefined) {
+      $('pw-r-pick').textContent = '';
+    } else if (Number.isFinite(d.vals[sel])) {
+      const v = d.vals[sel];
+      $('pw-r-pick').textContent = `${this._rptBucketLabel(mode, d.start, sel)} · ${fmtKwh(v)}`
+        + (price ? ` · ${fmtVnd(v * price)}` : '');
+    } else {
+      $('pw-r-pick').textContent = `${this._rptBucketLabel(mode, d.start, sel)} · không có dữ liệu`;
+    }
+
+    $('pw-r-note').className = 'hint';
+    const unit = mode === 'day' ? 'từng giờ' : (mode === 'month' ? 'từng ngày' : 'từng tháng');
+    $('pw-r-note').textContent = `Mỗi cột là lượng điện lưới ${unit}. Bấm vào cột để xem `
+      + 'số chính xác. Số liệu do Home Assistant tự tính từ bộ đếm của ổ cắm, nên lùi '
+      + 'được đến tận lúc bắt đầu ghi, không giới hạn như app của hãng.';
+  }
+
   // ----------------------------------------------------------- cài đặt ----
   async _loadSettings() {
     if (!this._hass || !this._hass.callWS) return;
@@ -609,7 +923,9 @@ class UpsPanelCard extends HTMLElement {
       await this._hass.callWS({ type: 'ups_vertiv/save', config });
       this._cfg = config;
       this._pwAt = 0;          // buộc hỏi lại thống kê theo ổ cắm vừa chọn
+      this._rptCache = {};     // cache cũ là của entity cũ, bỏ hết
       this._updatePower();
+      if (this._tab === 'pw') this._loadReport();
       msg.textContent = 'Đã lưu.';
     } catch (e) {
       msg.textContent = 'Lưu thất bại: ' + (e.message || e);
@@ -775,6 +1091,44 @@ class UpsPanelCard extends HTMLElement {
         .row.danger .sw input:checked + .sl { background:rgba(244,67,54,.45); }
         .row.danger .sw input:checked + .sl::before { background:#f44336; }
         .hint.alert { color:#c62828; font-weight:600; }
+
+        /* --- bao cao tieu thu --- */
+        .seg { display:flex; gap:0; margin-bottom:12px; border:1px solid var(--divider-color);
+               border-radius:8px; overflow:hidden; }
+        .seg-b { flex:1; padding:8px 4px; border:none; background:none; cursor:pointer;
+                 font-family:inherit; font-size:.85rem; font-weight:600;
+                 color:var(--secondary-text-color); }
+        .seg-b + .seg-b { border-left:1px solid var(--divider-color); }
+        .seg-b.sel { background:var(--primary-color, #03a9f4); color:#fff; }
+        .nav { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+        .nav-b { width:34px; height:34px; flex:0 0 auto; border:1px solid var(--divider-color);
+                 border-radius:8px; background:none; cursor:pointer; font-size:1.1rem;
+                 color:var(--primary-text-color); font-family:inherit; line-height:1; }
+        .nav-b:disabled { opacity:.35; cursor:default; }
+        .nav-l { flex:1; text-align:center; font-weight:600; font-size:.95rem; }
+        .rpt { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+        .rpt .v { font-size:1.05rem; }
+        .rpt .sub { font-size:.72rem; color:var(--secondary-text-color); margin-top:2px; }
+        .rpt .v.up { color:#c62828; }
+        .rpt .v.down { color:#2e7d32; }
+
+        /* Cot ve bang div thay vi thu vien ve bieu do: panel nay khong duoc tai
+           them gi tu internet, va mot bieu do cot thi khong can den the. */
+        .chart { display:flex; align-items:flex-end; gap:2px; height:150px;
+                 margin:14px 0 0; border-bottom:1px solid var(--divider-color); }
+        .chart .col { flex:1 1 0; min-width:0; height:100%; display:flex;
+                      flex-direction:column; justify-content:flex-end; cursor:pointer; }
+        .chart .col i { display:block; min-height:1px; border-radius:2px 2px 0 0;
+                        background:var(--primary-color, #03a9f4); }
+        .chart .col:hover i { filter:brightness(1.15); }
+        .chart .col.sel i { background:#ff9800; }
+        .chart .col.empty i { background:var(--divider-color); }
+        .x-axis { display:flex; gap:2px; margin-top:4px; font-size:.65rem;
+                  color:var(--secondary-text-color); }
+        .x-axis div { flex:1 1 0; min-width:0; text-align:center; overflow:hidden;
+                      white-space:nowrap; }
+        .hint.pick { min-height:1.2em; margin:6px 0 2px; color:var(--primary-text-color);
+                     font-weight:600; }
         .sect { font-size:.72rem; font-weight:700; color:var(--secondary-text-color);
                 margin:16px 0 8px; letter-spacing:.03em; }
         .btns { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
@@ -798,6 +1152,7 @@ class UpsPanelCard extends HTMLElement {
 
         <div class="tabs">
           <button class="tab sel" id="tab-info">Thông tin</button>
+          <button class="tab" id="tab-pw">Tiêu thụ</button>
           <button class="tab" id="tab-log">Nhật ký</button>
           <button class="tab" id="tab-set">Cài đặt</button>
         </div>
@@ -862,6 +1217,34 @@ class UpsPanelCard extends HTMLElement {
               <div class="sub" id="pw-year-sub"></div></div>
           </div>
           <div class="hint" id="pw-note" style="display:none"></div>
+        </div>
+
+        <div id="pane-pw" style="display:none">
+          <div class="seg" id="pw-seg">
+            <button class="seg-b sel" id="pw-m-day">Ngày</button>
+            <button class="seg-b" id="pw-m-month">Tháng</button>
+            <button class="seg-b" id="pw-m-year">Năm</button>
+          </div>
+          <div class="nav">
+            <button class="nav-b" id="pw-prev" title="Kỳ trước">&#8249;</button>
+            <div class="nav-l" id="pw-label">--</div>
+            <button class="nav-b" id="pw-next" title="Kỳ sau">&#8250;</button>
+          </div>
+          <div class="rpt" id="pw-rpt">
+            <div class="cell"><div class="k">Tổng</div>
+              <div class="v" id="pw-r-total">--</div>
+              <div class="sub" id="pw-r-cost"></div></div>
+            <div class="cell"><div class="k">So với kỳ trước</div>
+              <div class="v" id="pw-r-delta">--</div>
+              <div class="sub" id="pw-r-prev"></div></div>
+            <div class="cell"><div class="k">Cao nhất</div>
+              <div class="v" id="pw-r-peak">--</div>
+              <div class="sub" id="pw-r-peak-at"></div></div>
+          </div>
+          <div class="chart" id="pw-chart"></div>
+          <div class="x-axis" id="pw-axis"></div>
+          <div class="hint pick" id="pw-r-pick"></div>
+          <div class="hint" id="pw-r-note"></div>
         </div>
 
         <div id="pane-log" style="display:none">
@@ -1014,6 +1397,7 @@ class UpsPanelCard extends HTMLElement {
 
     const $ = (id) => this.shadowRoot.getElementById(id);
     $('tab-info').addEventListener('click', () => this._setTab('info'));
+    $('tab-pw').addEventListener('click', () => this._setTab('pw'));
     $('tab-log').addEventListener('click', () => this._setTab('log'));
     $('tab-set').addEventListener('click', () => this._setTab('set'));
     $('btn-save').addEventListener('click', () => this._saveSettings());
@@ -1034,6 +1418,17 @@ class UpsPanelCard extends HTMLElement {
       }
       this._toggleSwitch('ups_power', on, 'UPS');
     });
+    for (const m of ['day', 'month', 'year']) {
+      $(`pw-m-${m}`).addEventListener('click', () => {
+        if (this._rptMode === m) return;
+        this._rptMode = m;
+        this._rptRef = new Date();      // doi che do thi ve ky hien tai
+        this._rptSel = null;
+        this._loadReport();
+      });
+    }
+    $('pw-prev').addEventListener('click', () => this._rptStep(-1));
+    $('pw-next').addEventListener('click', () => this._rptStep(1));
     $('ctl-plug').addEventListener('change', (ev) => {
       const on = ev.target.checked;
       const eid = (this._cfg || {}).plug_entity || '';

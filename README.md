@@ -276,6 +276,36 @@ Chọn công tắc thì khối **Điều khiển UPS** có thêm một công t�
 đỏ *"Ổ cắm đang TẮT — UPS không có điện lưới và đang chạy bằng pin"* thay vì để người đọc
 tự đoán.
 
+### Tab Tiêu thụ — báo cáo theo ngày / tháng / năm
+
+| Chế độ | Mỗi cột là | Chu kỳ thống kê |
+|---|---|---|
+| **Ngày** | một giờ (24 cột) | `hour`, riêng hôm nay dùng `5minute` |
+| **Tháng** | một ngày | `day` |
+| **Năm** | một tháng (12 cột) | `month` |
+
+Hai nút `‹` `›` lùi/tiến từng kỳ; nút tiến tự khoá khi đã ở kỳ hiện tại. Bấm vào một cột
+để xem số chính xác của cột đó. Lùi được **đến tận lúc recorder bắt đầu ghi**, không giới
+hạn như app của hãng ổ cắm.
+
+Hai chi tiết khiến con số đáng tin:
+
+- **Ô của kỳ đang chạy được vá bằng dữ liệu mịn hơn.** Thống kê theo giờ chỉ chốt khi hết
+  giờ, nên cột "hôm nay" trong biểu đồ tháng sẽ thiếu đúng phần giờ hiện tại — và lệch với
+  con số *Hôm nay* ở tab Thông tin. Lệch số giữa hai tab là loại lỗi làm mất tin vào cả
+  hai, nên cột đó được vá lại bằng chu kỳ 5 phút (tương tự: cột tháng này trong biểu đồ
+  năm vá bằng chu kỳ ngày).
+- **Kỳ đang chạy so với ĐÚNG PHẦN TƯƠNG ỨNG của kỳ trước**, không phải cả kỳ. So nửa ngày
+  với cả ngày thì lúc nào cũng ra "giảm 50%" — một con số xanh lè vô nghĩa. Mốc cắt làm
+  tròn xuống về biên chu kỳ để tổng luôn là những ô trọn vẹn. Lúc chưa trôi qua ô nào
+  (ví dụ 00:30) thì panel ghi *"chưa đủ dữ liệu để so sánh"* chứ không bịa ra tỉ lệ.
+
+Kỳ đã khép lại thì số không bao giờ đổi nữa nên panel nhớ luôn, không hỏi lại recorder;
+chỉ kỳ đang chạy mới làm mới, nhiều nhất 60 giây một lần.
+
+Biểu đồ vẽ bằng `div`, **không tải thư viện vẽ đồ thị nào** — panel không được phụ thuộc
+internet để hiển thị.
+
 Vài điểm đáng biết:
 
 - **Các mốc ngày/tháng/năm do Home Assistant tự tính**, bằng `recorder/statistics_during_period`
