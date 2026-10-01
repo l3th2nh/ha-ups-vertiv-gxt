@@ -8,16 +8,33 @@
  * Dữ liệu đến từ thiết bị ESP32-C3 chạy ESPHome (xem thư mục esphome/).
  */
 
-const UPS_PANEL_VERSION = '4.0.0';
 const CARD_TAG = 'ups-panel-card';
 
 // Tính một lần, có đường lui: nếu import.meta.url không dùng được thì rơi về
 // đường dẫn tĩnh mặc định do integration đăng ký.
+//
+// PHẢI mang theo query string của chính file này. Integration đăng ký panel ở
+// `ups-panel.js?v=<phiên bản>`, nhưng `new URL('./x.js', base)` thì VỨT query
+// đi — card luôn được nạp từ một URL không đổi, nên trình duyệt dùng mãi bản đã
+// cache. Trên máy tính không ai nhận ra vì Ctrl+F5 bỏ qua cache; trên app điện
+// thoại thì không có Ctrl+F5, và panel đứng yên ở bản cũ.
 const CARD_URL = (() => {
   try {
-    return new URL('./ups-panel-card.js', import.meta.url).href;
+    const me = new URL(import.meta.url);
+    const url = new URL('./ups-panel-card.js', me);
+    url.search = me.search;
+    return url.href;
   } catch (e) {
     return '/ups_vertiv-frontend/ups-panel-card.js';
+  }
+})();
+
+// Lấy luôn từ query string thay vì chép tay, để không bao giờ lệch với manifest
+const UPS_PANEL_VERSION = (() => {
+  try {
+    return new URL(import.meta.url).searchParams.get('v') || 'dev';
+  } catch (e) {
+    return 'dev';
   }
 })();
 

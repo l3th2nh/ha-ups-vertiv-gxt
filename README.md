@@ -224,13 +224,14 @@ Repo này là **HACS integration**. Cài xong tự dựng mục **UPS** trên th
 2. Tìm **UPS Vertiv GXT Panel** → Download → **khởi động lại HA**
 3. *Cài đặt → Thiết bị & Dịch vụ → Thêm tích hợp* → **UPS Vertiv** → Submit
 
-Panel có 3 tab:
+Panel có 4 tab:
 
 | Tab | Nội dung |
 |---|---|
-| **Thông tin** | Sơ đồ dòng điện, thanh pin, thông số, trạng thái ổ P1 |
+| **Thông tin** | Sơ đồ dòng điện, thanh pin, thông số, trạng thái ổ P1, tiêu thụ điện lưới |
+| **Tiêu thụ** | Báo cáo theo ngày / tháng / năm, có biểu đồ cột |
 | **Nhật ký** | Lịch sử mất điện — dựng lại từ **recorder của HA**, không cần bộ nhớ riêng |
-| **Cài đặt** | Bật/tắt cảnh báo, chọn điện thoại nhận thông báo, nút Gửi thử |
+| **Cài đặt** | Cảnh báo, điều khiển UPS, chọn ổ cắm để đo tiêu thụ |
 
 Card cũng dùng được ở dashboard khác mà không phải khai báo resource:
 
@@ -240,6 +241,25 @@ type: custom:ups-panel-card
 
 Card **tự dò tiền tố entity** (tìm entity kết thúc bằng `_output_current`) nên chạy được
 kể cả khi bạn đổi tên thiết bị ESPHome.
+
+## ⚠️ Cập nhật xong mà app điện thoại vẫn hiện bản cũ
+
+File JS được phục vụ kèm `?v=<phiên bản>`; trình duyệt coi mỗi phiên bản là một URL khác
+nên tự nạp lại. Chỉ cần **khởi động lại HA** sau khi HACS tải bản mới — `add_extra_js_url`
+và `panel_custom` chỉ sinh URL một lần lúc nạp integration.
+
+Nếu vẫn thấy bản cũ, kiểm tra đúng hai chỗ này — cả hai từng hỏng và cùng gây ra một triệu
+chứng: *máy tính thì đúng, điện thoại thì không*, vì Ctrl+F5 bỏ qua cache còn app thì không
+có Ctrl+F5:
+
+- `VERSION` trong `const.py` **đọc từ `manifest.json`**, không chép tay. Nó từng bị ghim
+  cứng ở `4.0.0` suốt nhiều bản phát hành, nên `?v=` không bao giờ đổi.
+- `ups-panel.js` import card phải **mang theo query string của chính nó**.
+  `new URL('./x.js', import.meta.url)` vứt query đi, khiến card luôn được nạp từ một URL
+  cố định.
+
+Khi phát hành chỉ phải sửa **hai** chỗ: `version` trong `manifest.json` và
+`UPS_CARD_VERSION` trong `ups-panel-card.js` (cái sau chỉ để hiện trên giao diện).
 
 ## Cảnh báo mất điện
 
