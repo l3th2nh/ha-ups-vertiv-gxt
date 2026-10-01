@@ -252,6 +252,36 @@ UPS ngắt ổ P1 · có điện lại.
 Engine chạy nền trong integration, bám `async_track_state_change_event` nên phản ứng tức
 thì. Cảnh báo pin chỉ bắn **một lần cho mỗi lần mất điện**, reset khi có điện lại.
 
+## Đo tiêu thụ điện lưới
+
+UPS **không** báo công suất nó rút từ lưới. `QGS` chỉ cho `Load%` và dòng *đầu ra* —
+thiếu đúng phần quan trọng nhất là tổn hao của chính cái UPS (quạt, biến áp, sạc pin),
+thứ chạy 24/7 và chiếm phần lớn hoá đơn khi tải nhẹ.
+
+Cách đo đúng là **đặt một ổ cắm thông minh ở phía đầu vào** và đọc nó. Panel → tab
+**Cài đặt** → mục *Đo tiêu thụ điện* → chọn cảm biến công suất (W) và cảm biến năng
+lượng (kWh) của ổ cắm đó, điền giá điện → **Lưu**. Số liệu hiện ở tab **Thông tin**:
+đang rút · hôm nay · tháng này · năm nay, kèm quy ra tiền.
+
+Vài điểm đáng biết:
+
+- **Các mốc ngày/tháng/năm do Home Assistant tự tính**, bằng `recorder/statistics_during_period`
+  trên bộ đếm tích luỹ của ổ cắm. Không gọi cloud của hãng ổ cắm, nên không chết khi
+  hãng đổi API — và không cần tạo `utility_meter` hay helper nào.
+- **Giai đoạn chạy pin tự động bị loại khỏi phép tính**, không cần làm gì thêm: mất điện
+  lưới thì ổ cắm cũng mất điện và đếm được 0 W. Đây đúng là *điện lưới đã tiêu thụ*.
+- Mốc "hôm nay" lấy từ thống kê ngắn hạn (chu kỳ 5 phút) nên trễ tối đa 5 phút; tháng và
+  năm lấy chu kỳ ngày/tháng. Ba mốc hỏi độc lập — một mốc lỗi thì hai mốc kia vẫn hiện.
+- Panel gọi lại thống kê **nhiều nhất 60 giây một lần**. Công suất tức thời thì đọc thẳng
+  từ state nên đổi theo đúng nhịp ổ cắm đẩy dữ liệu về.
+
+Đo thực tế trên máy này, tải 6–8%: **~340 W** rút từ lưới → **~8,2 kWh/ngày**. Phần lớn
+là tổn hao của UPS, không phải điện mà tải dùng.
+
+> ⚠️ Đặt `Power-on behavior` của ổ cắm thành **On**. Để `Off` thì mỗi lần ổ cắm mất điện
+> rồi có lại, nó sẽ **không tự cấp điện lại cho UPS** — UPS xả hết pin rồi tắt, trong khi
+> điện lưới vẫn có.
+
 ---
 
 # 4. Giao thức — kết quả dò thực tế
@@ -393,19 +423,27 @@ Lệnh serial (đã kiểm chứng): `QSK1` đọc trạng thái, **`SKON1`** b�
 
 ---
 
-# 6. Còi báo — không điều khiển được qua serial
+# 6. Còi báo — điều khiển được qua serial
 
-Manual mục 3-1:
+Panel có ô tick **Còi báo** ở tab Cài đặt, dùng cờ `A` của `QFLAG`:
+
+| Lệnh | Phản hồi | Việc nó làm |
+|---|---|---|
+| `PEA` | `(ACK` | Bật còi |
+| `PDA` | `(ACK` | Tắt còi |
+
+> ⚠️ Mục này từng kết luận **sai** là "không điều khiển được qua serial", vì thực nghiệm
+> ban đầu gửi `PEa`/`PDa` chữ thường và nhận `(NAK` 21/21 lần. Nguyên nhân chỉ là kiểu
+> chữ — xem phần [Lệnh GHI cờ](#lệnh-ghi-cờ--hoạt-động-nhưng-phải-viết-hoa).
+
+Manual mục 3-1 mô tả cách làm bằng tay, vẫn đúng và vẫn dùng được:
 
 > *Mute the alarm: When the UPS is on battery mode, press and hold this button for at
 > least 5 seconds to disable or enable the alarm system.*
 
-Đây là **toggle vật lý trên nút `ON/MUTE`**, và **chỉ tác dụng khi đang chạy pin**.
-Manual không liệt kê lệnh serial nào cho còi báo; thực nghiệm cũng khớp — `PEa`/`PDa`
-trả `(NAK` 21/21 lần trong khi `SKON1` trả `(ACK` cùng phiên.
-
-**Bật lại còi:** rút điện lưới → giữ `ON/MUTE` 5 giây → kiểm biểu tượng mute trên LCD
-đã biến mất → cắm điện lại.
+Đó là **toggle vật lý trên nút `ON/MUTE`**, và **chỉ tác dụng khi đang chạy pin** — nên
+nếu muốn làm bằng tay thì: rút điện lưới → giữ `ON/MUTE` 5 giây → kiểm biểu tượng mute
+trên LCD → cắm điện lại. Qua panel thì không cần mất điện.
 
 ---
 

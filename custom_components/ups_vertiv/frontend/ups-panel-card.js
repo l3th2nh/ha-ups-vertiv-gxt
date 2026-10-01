@@ -15,7 +15,7 @@
  * Chỉ đặt `prefix` khi muốn ép thủ công (ví dụ có 2 bộ UPS).
  */
 
-const UPS_CARD_VERSION = '4.6.0';
+const UPS_CARD_VERSION = '4.7.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -84,6 +84,16 @@ function dayLabel(iso) {
   return `${THU[d.getDay()]}, ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function fmtVnd(n) {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '';
+  return new Intl.NumberFormat('vi-VN').format(Math.round(n)) + ' đ';
+}
+
+function fmtKwh(n) {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '--';
+  return `${n.toFixed(n < 10 ? 2 : 1)} kWh`;
+}
+
 function fmtWhen(iso) {
   if (!iso) return '--';
   const d = new Date(iso);
@@ -117,6 +127,7 @@ class UpsPanelCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this._built) this._build();
+    this._ensureCfg();
     this._update();
   }
 
@@ -299,6 +310,191 @@ class UpsPanelCard extends HTMLElement {
     this._update();
   }
 
+  // -------------------------------------------------- tiêu thụ điện lưới ---
+
+  /**
+   * Nạp cấu hình một lần ngay khi card dựng xong.
+   *
+   * Trước đây cấu hình chỉ được đọc khi mở tab Cài đặt, nhưng khối tiêu thụ
+   * nằm ở tab Thông tin nên phải biết trước ổ cắm nào đang đo. Lỗi ở đây không
+   * được làm chết card: không đọc được thì khối tiêu thụ chỉ đơn giản là ẩn.
+   */
+  async _ensureCfg() {
+    if (this._cfg || this._cfgLoading || !this._hass || !this._hass.callWS) return;
+    this._cfgLoading = true;
+    try {
+      const res = await this._hass.callWS({ type: 'ups_vertiv/get' });
+      this._cfg = res.config || {};
+      this._updatePower();
+    } catch (e) {
+      /* bỏ qua: khối tiêu thụ ẩn, phần còn lại của card vẫn chạy */
+    }
+    this._cfgLoading = false;
+  }
+
+  /** Mọi sensor trong HA mang đúng device_class, để người dùng chọn trong danh sách. */
+  _entityChoices(deviceClass) {
+    const out = [];
+    for (const id of Object.keys(this._hass.states)) {
+      if (!id.startsWith('sensor.')) continue;
+      const a = this._hass.states[id].attributes || {};
+      if (a.device_class !== deviceClass) continue;
+      out.push({ id, name: a.friendly_name || id });
+    }
+    out.sort((x, y) => x.name.localeCompare(y.name, 'vi'));
+    return out;
+  }
+
+  _fillSelect(el, choices, chosen, emptyLabel) {
+    if (!el) return;
+    const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const opts = [`<option value="">${emptyLabel}</option>`];
+    let found = false;
+    for (const c of choices) {
+      if (c.id === chosen) found = true;
+      opts.push(`<option value="${esc(c.id)}"${c.id === chosen ? ' selected' : ''}>`
+        + `${esc(c.name)} — ${esc(c.id)}</option>`);
+    }
+    // Entity đã lưu nhưng hiện không còn -> vẫn giữ để không âm thầm mất cấu hình
+    if (chosen && !found) {
+      opts.push(`<option value="${esc(chosen)}" selected>${esc(chosen)} (không tìm thấy)</option>`);
+    }
+    el.innerHTML = opts.join('');
+  }
+
+  /**
+   * Lấy lượng điện theo ngày / tháng / năm từ thống kê dài hạn của Home Assistant.
+   *
+   * Ổ cắm thông minh chỉ gửi về CÔNG SUẤT tức thời và một BỘ ĐẾM tích luỹ. Các
+   * mốc thời gian là do HA tự tính từ bộ đếm đó, nên không phụ thuộc cloud của
+   * hãng ổ cắm và không mất khi cloud đổi API.
+   *
+   * Chọn chu kỳ theo độ tươi cần thiết:
+   *   hôm nay  -> '5minute' (thống kê ngắn hạn, trễ tối đa 5 phút)
+   *   tháng/năm -> 'day' / 'month' (nhẹ, sai số không đáng kể)
+   */
+  async _fetchEnergy(ent) {
+    const now = new Date();
+    const d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const m0 = new Date(now.getFullYear(), now.getMonth(), 1);
+    const y0 = new Date(now.getFullYear(), 0, 1);
+
+    const ask = async (start, period) => {
+      const res = await this._hass.callWS({
+        type: 'recorder/statistics_during_period',
+        start_time: start.toISOString(),
+        end_time: now.toISOString(),
+        statistic_ids: [ent],
+        period,
+        types: ['change'],
+      });
+      const rows = (res && res[ent]) || [];
+      let sum = 0;
+      let seen = false;
+      for (const r of rows) {
+        if (r.change === null || r.change === undefined) continue;
+        const v = Number(r.change);
+        if (!Number.isFinite(v)) continue;
+        sum += v;
+        seen = true;
+      }
+      return seen ? sum : null;
+    };
+
+    // Mỗi mốc hỏi độc lập: recorder có thể từ chối một chu kỳ (ví dụ thống kê
+    // ngắn hạn đã bị dọn) mà hai mốc còn lại vẫn đọc được bình thường. Dùng
+    // Promise.all trần thì một lỗi lẻ sẽ xoá sạch cả ba con số.
+    let err = null;
+    const safe = (start, period) => ask(start, period).catch((e) => {
+      err = err || (e.message || String(e));
+      return null;
+    });
+    const [today, month, year] = await Promise.all([
+      safe(d0, '5minute'), safe(m0, 'day'), safe(y0, 'month'),
+    ]);
+    return { today, month, year, err };
+  }
+
+  /**
+   * Cập nhật khối tiêu thụ.
+   *
+   * Công suất tức thời đọc thẳng từ state nên đổi theo từng lần HA đẩy dữ liệu.
+   * Thống kê thì gọi lại nhiều nhất 60 giây một lần — `_update()` chạy mỗi khi
+   * BẤT KỲ entity nào đổi trạng thái, gọi websocket theo nhịp đó sẽ làm ngập
+   * recorder một cách vô ích.
+   */
+  _updatePower() {
+    if (!this._built || !this._hass) return;
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    const c = this._cfg || {};
+    const pEnt = c.power_entity || '';
+    const eEnt = c.energy_entity || '';
+    const show = !!(pEnt || eEnt);
+
+    if ($('pw-sec')) $('pw-sec').style.display = show ? '' : 'none';
+    if ($('pw-grid')) $('pw-grid').style.display = show ? 'grid' : 'none';
+    if (!show) {
+      if ($('pw-note')) $('pw-note').style.display = 'none';
+      return;
+    }
+
+    const ps = pEnt ? this._hass.states[pEnt] : null;
+    const w = ps ? Number(ps.state) : NaN;
+    const price = Number(c.price_kwh) || 0;
+    $('pw-now').textContent = Number.isFinite(w) ? `${w.toFixed(0)} W` : '--';
+    $('pw-now-sub').textContent = Number.isFinite(w) && w > 0
+      ? `≈ ${fmtKwh(w * 24 / 1000)}/ngày`
+        + (price ? ` · ${fmtVnd(w * 24 / 1000 * 30 * price)}/tháng` : '')
+      : (pEnt ? '' : 'Chưa chọn cảm biến công suất');
+
+    if (eEnt && !this._pwBusy
+        && (this._pwEnt !== eEnt || !this._pwAt || Date.now() - this._pwAt > 60000)) {
+      this._pwBusy = true;
+      this._pwEnt = eEnt;
+      this._fetchEnergy(eEnt)
+        .then((r) => { this._pwVals = r; this._pwErr = r.err || null; })
+        .catch((e) => { this._pwVals = null; this._pwErr = e.message || String(e); })
+        .then(() => { this._pwAt = Date.now(); this._pwBusy = false; this._paintEnergy(); });
+    }
+    this._paintEnergy();
+  }
+
+  _paintEnergy() {
+    if (!this._built) return;
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    if (!$('pw-today')) return;
+    const c = this._cfg || {};
+    const price = Number(c.price_kwh) || 0;
+    const v = this._pwVals || {};
+
+    for (const [key, cell] of [['today', 'pw-today'], ['month', 'pw-month'], ['year', 'pw-year']]) {
+      const n = v[key];
+      $(cell).textContent = (n === null || n === undefined) ? '--' : fmtKwh(n);
+      $(`${cell}-sub`).textContent =
+        (price && Number.isFinite(n)) ? fmtVnd(n * price) : '';
+    }
+
+    const note = $('pw-note');
+    if (!note) return;
+    if (!c.energy_entity) {
+      note.style.display = '';
+      note.textContent = 'Chọn thêm cảm biến năng lượng (kWh) trong tab Cài đặt '
+        + 'để xem lượng điện theo ngày, tháng và năm.';
+    } else if (this._pwErr) {
+      note.style.display = '';
+      note.textContent = 'Không đọc được thống kê: ' + this._pwErr;
+    } else if (v.today === null || v.today === undefined) {
+      note.style.display = '';
+      note.textContent = 'Home Assistant chưa có thống kê cho cảm biến này. '
+        + 'Số liệu sẽ xuất hiện sau khoảng 5–10 phút kể từ khi ổ cắm được thêm vào.';
+    } else {
+      note.style.display = '';
+      note.textContent = 'Đây là điện lưới mà UPS rút vào, đo tại ổ cắm — '
+        + 'gồm cả phần UPS tự tiêu thụ và phần sạc acquy. '
+        + 'Số liệu do Home Assistant tự tính từ bộ đếm của ổ cắm.';
+    }
+  }
+
   // ----------------------------------------------------------- cài đặt ----
   async _loadSettings() {
     if (!this._hass || !this._hass.callWS) return;
@@ -352,11 +548,21 @@ class UpsPanelCard extends HTMLElement {
     $('set-offline-after').value = c.offline_after ?? 3;
     $('set-warn-at').value = c.batt_warn_at ?? 50;
     $('set-crit-at').value = c.batt_crit_at ?? 25;
+
+    this._fillSelect($('set-pw-power'), this._entityChoices('power'),
+      c.power_entity || '', '— không đo —');
+    this._fillSelect($('set-pw-energy'), this._entityChoices('energy'),
+      c.energy_entity || '', '— không đo —');
+    $('set-price').value = c.price_kwh ?? 3000;
   }
 
   _collectSettings() {
     const $ = (id) => this.shadowRoot.getElementById(id);
+    // Giữ lại những khoá KHÔNG có ô nhập trên form (ví dụ log_cleared_at).
+    // Backend ghép theo kiểu {**DEFAULT_CONFIG, **config}, nên khoá nào bị
+    // thiếu ở đây sẽ bị trả về giá trị mặc định - tức là âm thầm mất dữ liệu.
     return {
+      ...(this._cfg || {}),
       enabled: $('set-enabled').checked,
       service: $('set-svc').value,
       outage: $('set-outage').checked,
@@ -368,6 +574,9 @@ class UpsPanelCard extends HTMLElement {
       shed: $('set-shed').checked,
       offline: $('set-offline').checked,
       offline_after: Number($('set-offline-after').value) || 3,
+      power_entity: $('set-pw-power').value,
+      energy_entity: $('set-pw-energy').value,
+      price_kwh: Number($('set-price').value) || 0,
     };
   }
 
@@ -377,6 +586,8 @@ class UpsPanelCard extends HTMLElement {
       const config = this._collectSettings();
       await this._hass.callWS({ type: 'ups_vertiv/save', config });
       this._cfg = config;
+      this._pwAt = 0;          // buộc hỏi lại thống kê theo ổ cắm vừa chọn
+      this._updatePower();
       msg.textContent = 'Đã lưu.';
     } catch (e) {
       msg.textContent = 'Lưu thất bại: ' + (e.message || e);
@@ -490,6 +701,11 @@ class UpsPanelCard extends HTMLElement {
 
         .empty { text-align:center; padding:28px 12px; color:var(--secondary-text-color); font-size:.85rem; line-height:1.7; }
 
+        .hint { font-size:.75rem; color:var(--secondary-text-color); line-height:1.5; }
+        .pw-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:6px 0 4px; }
+        @media (max-width:560px) { .pw-grid { grid-template-columns:repeat(2,1fr); } }
+        .pw-grid .v { font-size:1.05rem; }
+        .pw-grid .sub { font-size:.72rem; color:var(--secondary-text-color); margin-top:2px; }
         .sec { font-weight:600; font-size:.82rem; letter-spacing:.04em;
                text-transform:uppercase; color:var(--secondary-text-color);
                margin:16px 0 8px; }
@@ -590,6 +806,19 @@ class UpsPanelCard extends HTMLElement {
             </div>
             <div class="dot na" id="outlet-dot">--</div>
           </div>
+
+          <div class="sec" id="pw-sec" style="display:none">Tiêu thụ điện lưới</div>
+          <div class="pw-grid" id="pw-grid" style="display:none">
+            <div class="cell"><div class="k">Đang rút</div><div class="v" id="pw-now">--</div>
+              <div class="sub" id="pw-now-sub"></div></div>
+            <div class="cell"><div class="k">Hôm nay</div><div class="v" id="pw-today">--</div>
+              <div class="sub" id="pw-today-sub"></div></div>
+            <div class="cell"><div class="k">Tháng này</div><div class="v" id="pw-month">--</div>
+              <div class="sub" id="pw-month-sub"></div></div>
+            <div class="cell"><div class="k">Năm nay</div><div class="v" id="pw-year">--</div>
+              <div class="sub" id="pw-year-sub"></div></div>
+          </div>
+          <div class="hint" id="pw-note" style="display:none"></div>
         </div>
 
         <div id="pane-log" style="display:none">
@@ -644,6 +873,23 @@ class UpsPanelCard extends HTMLElement {
             <input type="checkbox" id="ctl-power">
           </div>
           <div class="hint ctl-note" id="ctl-msg"></div>
+
+          <div class="sec">Đo tiêu thụ điện</div>
+          <div class="hint" style="margin-bottom:8px">Chọn ổ cắm thông minh đang
+            cấp điện lưới cho UPS. Panel sẽ tự tính lượng điện theo ngày và tháng
+            từ thống kê của Home Assistant — không cần tạo helper nào.</div>
+          <div class="row">
+            <div class="lb">Cảm biến công suất</div>
+            <select id="set-pw-power"></select>
+          </div>
+          <div class="row">
+            <div class="lb">Cảm biến năng lượng</div>
+            <select id="set-pw-energy"></select>
+          </div>
+          <div class="row">
+            <div class="lb">Giá điện (đ/kWh)</div>
+            <input type="number" id="set-price" min="0" step="100" style="width:90px">
+          </div>
 
           <div class="sec">Cảnh báo</div>
           <div class="row">
@@ -888,6 +1134,8 @@ class UpsPanelCard extends HTMLElement {
       dot.className = 'dot na'; dot.textContent = '--';
       $('outlet-sub').textContent = 'Không rõ trạng thái';
     }
+
+    this._updatePower();
 
     const src = this._hass.states[this._id('sensor', 'mode_text')];
     $('foot').textContent = src && (src.last_updated || src.last_changed)

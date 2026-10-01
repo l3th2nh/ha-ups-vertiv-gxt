@@ -50,6 +50,12 @@ DEFAULT_CONFIG = {
     # Moc xoa nhat ky (ISO). Nhat ky dung tu recorder cua HA nen KHONG the
     # xoa du lieu that - chi an cac su kien truoc moc nay.
     "log_cleared_at": "",
+    # --- Do tieu thu dien cua UPS qua o cam thong minh ---
+    # Matter chi gui CONG SUAT tuc thoi + BO DEM tich luy. Cac moc "hom nay /
+    # thang / nam" do HA tu tinh tu thong ke dai han, khong phu thuoc cloud.
+    "power_entity": "",      # sensor cong suat (W)
+    "energy_entity": "",     # sensor nang luong tich luy (kWh)
+    "price_kwh": 3000,       # dong/kWh, de quy ra tien
 }
 
 
