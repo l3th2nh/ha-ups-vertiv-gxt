@@ -101,6 +101,15 @@ class UpsVertivPanel extends HTMLElement {
         .miss code {
           background: rgba(0,0,0,.08); padding: 1px 5px; border-radius: 4px; word-break: break-all;
         }
+        .retry {
+          margin-top: 14px; padding: 8px 18px; border: none; border-radius: 8px;
+          background: #c62828; color: #fff; font-family: inherit; font-size: .88rem;
+          font-weight: 600; cursor: pointer;
+        }
+        .load {
+          margin: 32px auto; max-width: 640px; text-align: center; font-size: .9rem;
+          color: var(--secondary-text-color, #666);
+        }
       </style>
 
       <div class="bar">
@@ -119,42 +128,138 @@ class UpsVertivPanel extends HTMLElement {
 
     const wrap = this.shadowRoot.getElementById('wrap');
 
-    // TỰ nạp card thay vì trông chờ frontend.add_extra_js_url.
-    // add_extra_js_url chỉ được tiêm vào lúc trang frontend khởi tạo, nên ngay
-    // sau khi thêm integration (hoặc khi trình duyệt còn cache trang cũ) card
-    // sẽ chưa tồn tại. Panel và card nằm cùng thư mục tĩnh, mà panel được nạp
-    // dạng ES module, nên import tương đối luôn giải ra đúng URL.
-    let importErr = null;
-    if (!customElements.get(CARD_TAG)) {
+    // TU nap card thay vi trong cho frontend.add_extra_js_url.
+    // add_extra_js_url chi duoc tiem vao luc trang frontend khoi tao, nen ngay
+    // sau khi them integration (hoac khi trinh duyet con cache trang cu) card
+    // se chua ton tai. Panel va card nam cung thu muc tinh, ma panel duoc nap
+    // dang ES module, nen import tuong doi luon giai ra dung URL.
+    const fail = await this._loadCard(wrap);
+    if (fail) { await this._showCardError(wrap, fail); return; }
+    this._mountCard(wrap);
+  }
+
+  /**
+   * Nạp card, có thử lại và tự chẩn đoán.
+   *
+   * Bản trước thử đúng MỘT lần rồi bỏ cuộc vĩnh viễn, và hộp lỗi chỉ nói được
+   * "không nạp được". Lần hỏng sáng 14/10/2026 rơi đúng vào vùng mù đó: không
+   * có dòng "Lỗi import" nào cả, nghĩa là `import()` đã THÀNH CÔNG mà custom
+   * element vẫn không xuất hiện. Một file RỖNG cũng import trót lọt y như vậy —
+   * JS rỗng là JS hợp lệ — nên một phản hồi hỏng nằm trong cache của app là đủ
+   * để ghim panel ở màn hình lỗi mãi mãi.
+   *
+   * Từ nay: thử lại vài lần, lần sau đổi URL để thoát cache, và nếu vẫn hỏng
+   * thì đi hỏi thẳng server xem thực sự nhận được cái gì.
+   */
+  async _loadCard(wrap) {
+    const MAX_TRY = 3;
+    let last = null;
+
+    for (let i = 1; i <= MAX_TRY; i++) {
+      if (customElements.get(CARD_TAG)) return null;
+
+      // Lần thử lại dùng URL khác: URL mới nằm ngoài module map của trình duyệt
+      // và ngoài cache của service worker, nên một bản đã hỏng không ghim được
+      // lỗi. Giữ nguyên URL thì import() lần hai chỉ trả lại đúng kết quả cũ.
+      const url = i === 1
+        ? CARD_URL
+        : `${CARD_URL}${CARD_URL.includes('?') ? '&' : '?'}r=${Date.now()}`;
+
+      wrap.innerHTML = `<div class="load">Đang nạp giao diện…`
+        + (i > 1 ? ` (lần ${i}/${MAX_TRY})` : '') + `</div>`;
+
       try {
-        await import(CARD_URL);
+        await import(url);
       } catch (e) {
-        importErr = e;
-        console.error('[ups-panel] không import được card:', e);
+        last = { stage: 'import', url, msg: String((e && e.message) || e) };
+        continue;
       }
+
+      // Module đã chạy xong thì element phải có gần như tức thì. Vẫn chờ rộng
+      // tay vì máy yếu, nhưng chờ lâu không cứu được trường hợp file rỗng.
+      const ok = await Promise.race([
+        customElements.whenDefined(CARD_TAG).then(() => true),
+        new Promise((r) => setTimeout(() => r(false), 10000)),
+      ]);
+      if (ok) return null;
+
+      last = { stage: 'define', url,
+               msg: 'file nạp được nhưng không đăng ký custom element' };
     }
+    return last || { stage: 'unknown', url: CARD_URL, msg: '' };
+  }
 
-    const ready = await Promise.race([
-      customElements.whenDefined(CARD_TAG).then(() => true),
-      new Promise((r) => setTimeout(() => r(false), 5000)),
-    ]);
-
-    if (!ready) {
-      const detail = importErr
-        ? `<br><br>Lỗi import: <code>${String(importErr.message || importErr)}</code>`
-        : '';
-      wrap.innerHTML = `
-        <div class="miss">
-          Không nạp được <code>${CARD_TAG}</code>.${detail}<br><br>
-          Kiểm tra file có phục vụ được không bằng cách mở thẳng đường dẫn này
-          trong trình duyệt:<br>
-          <code>${CARD_URL}</code><br><br>
-          Nếu báo 404 thì vào <b>Cài đặt &rarr; Thiết bị &amp; Dịch vụ</b>, xoá rồi
-          thêm lại <b>UPS Vertiv GXT Panel</b>, sau đó khởi động lại Home Assistant.
-        </div>`;
-      return;
+  /** Hỏi thẳng server xem URL đó thực sự trả về cái gì. */
+  async _probeCard(url) {
+    try {
+      const res = await fetch(url, { cache: 'reload' });
+      const text = await res.text();
+      return {
+        status: res.status,
+        type: res.headers.get('content-type') || '(không có)',
+        len: text.length,
+        head: text.slice(0, 60).replace(/\s+/g, ' '),
+      };
+    } catch (e) {
+      return { status: 0, type: '-', len: 0,
+               head: String((e && e.message) || e) };
     }
+  }
 
+  /** Dịch kết quả probe thành một câu nói rõ phải làm gì. */
+  _diagnose(p) {
+    if (p.status === 0) {
+      return 'Không gọi tới được Home Assistant. Máy chủ chưa khởi động xong, '
+        + 'hoặc điện thoại đang xem bản trang đã lưu sẵn mà không có mạng tới HA.';
+    }
+    if (p.status === 404) {
+      return 'Máy chủ trả <b>404</b> — integration chưa đăng ký được đường dẫn tĩnh. '
+        + 'Vào <b>Cài đặt → Thiết bị &amp; Dịch vụ</b>, xoá rồi thêm lại '
+        + '<b>UPS Vertiv GXT Panel</b>, sau đó khởi động lại Home Assistant.';
+    }
+    if (p.status >= 500) {
+      return `Máy chủ trả <b>${p.status}</b> — Home Assistant đang lỗi hoặc còn đang khởi động. `
+        + 'Đợi HA chạy hẳn rồi bấm Thử lại.';
+    }
+    if (p.len === 0) {
+      return 'Máy chủ trả về <b>file rỗng</b>. Gần như chắc chắn là một bản hỏng nằm '
+        + 'trong cache của app. Bấm <b>Thử lại</b> (nó tự đổi URL để thoát cache); '
+        + 'nếu vẫn vậy thì vào <b>Cài đặt → Companion app → Gỡ lỗi → Reset frontend cache</b>.';
+    }
+    if (!/javascript|ecmascript/i.test(p.type)) {
+      return `Máy chủ trả về <code>${p.type}</code> chứ không phải JavaScript — `
+        + 'nhiều khả năng là trang đăng nhập hoặc trang lỗi bị trả về thay cho file.';
+    }
+    return 'File tải về trông bình thường nhưng không đăng ký được custom element. '
+      + 'Nhiều khả năng là bản JS cũ/hỏng trong cache — bấm <b>Thử lại</b>.';
+  }
+
+  async _showCardError(wrap, fail) {
+    const p = await this._probeCard(fail.url);
+    wrap.innerHTML = `
+      <div class="miss">
+        Không nạp được <code>${CARD_TAG}</code>.<br><br>
+        ${this._diagnose(p)}<br><br>
+        <b>Chi tiết để đối chiếu:</b><br>
+        Hỏng ở bước: <code>${fail.stage === 'import' ? 'tải file' : 'đăng ký element'}</code>
+        ${fail.msg ? `<br>Thông báo: <code>${fail.msg}</code>` : ''}<br>
+        Máy chủ trả: <code>HTTP ${p.status} · ${p.type} · ${p.len} byte</code><br>
+        ${p.head ? `Đầu file: <code>${p.head}</code><br>` : ''}
+        Đường dẫn: <code>${fail.url}</code>
+        <div><button class="retry" id="retry">Thử lại</button></div>
+      </div>`;
+    const btn = this.shadowRoot.getElementById('retry');
+    if (btn) {
+      btn.addEventListener('click', async () => {
+        const again = await this._loadCard(wrap);
+        if (again) { await this._showCardError(wrap, again); return; }
+        this._mountCard(wrap);
+      });
+    }
+  }
+
+  _mountCard(wrap) {
+    wrap.innerHTML = '';
     const card = document.createElement(CARD_TAG);
     // Khong ep prefix: de card tu dung mac dinh + tu do tien to entity
     card.setConfig({ name: 'UPS Vertiv GXT-3000' });

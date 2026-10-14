@@ -261,6 +261,31 @@ có Ctrl+F5:
 Khi phát hành chỉ phải sửa **hai** chỗ: `version` trong `manifest.json` và
 `UPS_CARD_VERSION` trong `ups-panel-card.js` (cái sau chỉ để hiện trên giao diện).
 
+## ⚠️ "Không nạp được ups-panel-card"
+
+Panel tự nạp card bằng `import()`. Khi hỏng, nó **thử lại 3 lần**, lần sau thêm `&r=<mốc
+thời gian>` vào URL — URL mới nằm ngoài module map của trình duyệt và ngoài cache của
+service worker, nên một bản hỏng không ghim được lỗi vĩnh viễn. Vẫn hỏng thì panel **tự
+gọi lại URL đó** và in ra `HTTP <mã> · <content-type> · <số byte>` cùng đầu file, rồi dịch
+thành một câu nói rõ phải làm gì, kèm nút **Thử lại**.
+
+Đọc dòng chẩn đoán đó trước, đừng đoán:
+
+| Panel in ra | Nghĩa là |
+|---|---|
+| `HTTP 0` | Không với tới HA — máy chủ chưa khởi động xong, hoặc điện thoại đang xem bản trang đã lưu mà không có mạng tới HA |
+| `HTTP 404` | Integration chưa đăng ký được đường dẫn tĩnh → xoá rồi thêm lại integration, khởi động lại HA |
+| `HTTP 5xx` | HA đang lỗi hoặc còn đang khởi động → đợi rồi bấm Thử lại |
+| `200 · 0 byte` | Bản hỏng trong cache của app → bấm Thử lại; không đỡ thì *Companion app → Gỡ lỗi → Reset frontend cache* |
+| `200 · text/html` | Trang đăng nhập hoặc trang lỗi bị trả về thay cho file JS |
+
+> ⚠️ Một file JS **rỗng vẫn import thành công** — JS rỗng là JS hợp lệ. Bản trước của panel
+> chỉ thử một lần và chỉ báo "không nạp được", nên đúng trường hợp này rơi vào vùng mù:
+> không có thông báo lỗi nào để lần, vì không có lỗi nào được ném ra cả.
+
+Lỗi này **không liên quan** tới việc UPS hay mạch ESP32 có đang chạy hay không. Mạch chết
+thì entity thành `unavailable` và card hiện dải cảnh báo — nhưng card vẫn nạp được.
+
 ## Cảnh báo mất điện
 
 Panel → tab **Cài đặt** → chọn `notify.mobile_app_…` → **Lưu**. Bấm **Gửi thử** để kiểm
