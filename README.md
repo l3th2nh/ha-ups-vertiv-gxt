@@ -328,9 +328,18 @@ là thiết bị **đầu vào**. Trong Home Assistant nó hiện ra là entity 
 trạng thái bật/tắt, không có dịch vụ nào để gọi. `state` của nó là **dấu thời gian của lần
 bấm gần nhất**. Nên cách duy nhất là *nghe* nó rồi tự gọi lệnh lên thiết bị khác.
 
-**Cài đặt → Nút bấm vật lý**: mỗi nút chọn ba thứ — *nút nào* (entity `event.*`), *kiểu
-bấm*, và *làm gì*. Hành động gán được: bật / tắt / đảo **ổ cắm**, và bật / tắt / đảo
-**UPS** (`SON` / `SOFF`).
+**Cài đặt → Nút bấm vật lý**: ba khe gán, mỗi khe đặt tên được và nhận **hai hành động
+trên cùng một nút**, phân biệt bằng kiểu bấm — ví dụ bấm một lần thì mở, bấm hai lần thì
+tắt. Một nút một hành động thì muốn vừa bật vừa tắt phải hy sinh hai nút cho một thiết bị.
+
+Hành động gán được: bật / tắt / đảo **UPS** (`SON` / `SOFF`), bật / tắt / đảo **ổ cắm**,
+và bật / tắt / đảo **một thiết bị khác** tự chọn.
+
+Ô *thiết bị khác* nhận `fan`, `switch`, `light`, `climate`, `media_player`, `cover`,
+`script`, và cả **`scene`** — vì nhiều thiết bị hồng ngoại không vào được HA dưới dạng
+entity riêng, đường duy nhất là một cảnh *tap-to-run* của hãng. Lệnh gửi qua domain
+`homeassistant` (`homeassistant.turn_on` …) chứ không phải `switch`, nên chạy được với
+mọi loại trong số đó.
 
 **Không biết nút nào là nút nào thì bấm "Bấm thử để dò"** rồi bấm nút thật trên tường.
 Panel chụp trạng thái mọi entity `event.*`, chờ 25 giây, và cái nào đổi thì đó là nó —
@@ -357,6 +366,10 @@ Ba cái bẫy đã chặn sẵn trong [buttons.py](custom_components/ups_vertiv/
 - **Bấm nhầm.** Nút nằm trên tường, ai đi qua chạm phải cũng kích hoạt. Nếu hành động làm
   mất điện mà kiểu bấm để "bất kỳ", panel hiện cảnh báo đỏ ngay trong Cài đặt và khuyên
   đổi sang *bấm hai lần* hoặc *giữ*.
+- **Hai hành động trùng kiểu bấm.** Cùng một khe mà hai hành động cùng nghe một kiểu bấm
+  thì cả hai cùng nổ — gần như luôn là nhầm, nên panel bắt ngay trên form. Cũng bắt luôn
+  trường hợp chọn hành động mà chưa chọn nút, hoặc chọn *thiết bị khác* mà bỏ trống ô
+  thiết bị: cả hai đều dẫn tới "bấm nút, không có gì xảy ra, không chỗ nào báo vì sao".
 - **Tiền tố entity không đồng nhất.** Dò công tắc UPS theo **hậu tố** `_ups_power` thay vì
   ghép từ một tiền tố — thiết bị ESPHome từng được đổi tên sau khi một số entity đã tồn
   tại, nên entity cũ giữ tên cũ còn entity mới mang tên mới.

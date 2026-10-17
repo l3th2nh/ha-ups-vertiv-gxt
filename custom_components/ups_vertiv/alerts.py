@@ -61,12 +61,29 @@ DEFAULT_CONFIG = {
     # Cong tac ngu canh la thiet bi DAU VAO: trong HA no la entity `event.*`,
     # khong bat/tat duoc, chi bao "vua co nguoi bam". Nen phai nghe no roi tu
     # goi dich vu len o cam / cong tac UPS. Xem buttons.py.
-    "btn1_entity": "",       # entity event.* cua nut thu nhat
-    "btn1_press": "any",     # kieu bam: any | single_press | double_press | ...
+    # Moi KHE co: ten hien thi, nut nao, thiet bi dich rieng (cho hanh dong
+    # target_*), va HAI cap (kieu bam, hanh dong) de mot nut vua bat vua tat.
+    "btn1_name": "Control UPS",
+    "btn1_entity": "",       # entity event.* cua nut
+    "btn1_target": "",       # thiet bi dich rieng, cho hanh dong target_*
+    "btn1_press": "any",     # kieu bam: any | click | multi_press_1 | ...
     "btn1_action": "",       # xem ACTIONS trong buttons.py
+    "btn1_press2": "any",    # cap thu hai tren cung nut do
+    "btn1_action2": "",
+    "btn2_name": "Control Power plugin",
     "btn2_entity": "",
+    "btn2_target": "",
     "btn2_press": "any",
     "btn2_action": "",
+    "btn2_press2": "any",
+    "btn2_action2": "",
+    "btn3_name": "Control Fan",
+    "btn3_entity": "",
+    "btn3_target": "",
+    "btn3_press": "any",
+    "btn3_action": "",
+    "btn3_press2": "any",
+    "btn3_action2": "",
 }
 
 

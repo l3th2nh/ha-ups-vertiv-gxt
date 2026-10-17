@@ -18,7 +18,7 @@
 // Ky tu xuong dong cho hop thoai confirm. Viet bang fromCharCode vi chuoi
 // escape tung bi cong cu ghi file bien thanh xuong dong THAT, lam vo cu phap.
 const BR = String.fromCharCode(10);
-const UPS_CARD_VERSION = '4.11.1';
+const UPS_CARD_VERSION = '4.12.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -62,16 +62,33 @@ const PROBE_KEY = 'output_current';
 // Phai khop ACTIONS trong buttons.py - backend moi la nguoi thuc su chay lenh.
 const BTN_ACTIONS = [
   ['', '— không làm gì —'],
-  ['plug_on', 'Mở điện cho UPS (bật ổ cắm)'],
-  ['plug_off', 'Cắt điện vào UPS (tắt ổ cắm)'],
-  ['plug_toggle', 'Đảo ổ cắm (bật ↔ tắt)'],
   ['ups_on', 'Mở UPS (lệnh SON)'],
   ['ups_off', 'Tắt UPS (lệnh SOFF)'],
   ['ups_toggle', 'Đảo UPS (bật ↔ tắt)'],
+  ['plug_on', 'Mở điện cho UPS (bật ổ cắm)'],
+  ['plug_off', 'Cắt điện vào UPS (tắt ổ cắm)'],
+  ['plug_toggle', 'Đảo ổ cắm (bật ↔ tắt)'],
+  ['target_on', 'Bật / kích hoạt thiết bị khác'],
+  ['target_off', 'Tắt thiết bị khác'],
+  ['target_toggle', 'Đảo thiết bị khác (bật ↔ tắt)'],
 ];
+
+// Domain gan duoc vao o "thiet bi khac". Co ca scene va script vi nhieu thiet
+// bi hong ngoai khong vao HA duoc duoi dang entity rieng - duong duy nhat la
+// mot canh tap-to-run cua hang.
+const TARGET_DOMAINS = ['fan', 'switch', 'light', 'climate', 'media_player',
+  'cover', 'humidifier', 'vacuum', 'input_boolean', 'scene', 'script', 'automation'];
+
+const NUM_SLOTS = 3;
+
+// Phai khop DEFAULT_CONFIG trong alerts.py. Xoá trắng ô tên thì quay về tên
+// mặc định có nghĩa, chứ không rơi xuống "Nút 3" vô nghĩa.
+const BTN_DEFAULT_NAMES = ['Control UPS', 'Control Power plugin', 'Control Fan'];
 
 // Hanh dong lam mat dien: de kieu bam 'any' thi cham nhe cung dinh
 const BTN_RISKY = ['plug_off', 'plug_toggle', 'ups_off', 'ups_toggle'];
+// Hanh dong can mot entity dich do nguoi dung tu chon
+const BTN_NEEDS_TARGET = ['target_on', 'target_off', 'target_toggle'];
 
 // Moi tich hop dat ten kieu bam mot khac, nen chi dich cai nao biet
 const PRESS_LABEL = {
@@ -373,8 +390,9 @@ class UpsPanelCard extends HTMLElement {
    * đoán sai thì ô chọn ra một giá trị mà thiết bị không bao giờ gửi, và nút
    * sẽ im lặng không làm gì — kiểu hỏng khó tìm nhất.
    */
-  _fillPress(i, chosen) {
-    const el = this.shadowRoot.getElementById(`set-btn${i}-press`);
+  _fillPress(i, chosen, which) {
+    const w = which || '';
+    const el = this.shadowRoot.getElementById(`set-btn${i}-press${w}`);
     if (!el) return;
     const ent = this.shadowRoot.getElementById(`set-btn${i}-ent`).value;
     const st = ent && this._hass ? this._hass.states[ent] : null;
@@ -471,7 +489,12 @@ class UpsPanelCard extends HTMLElement {
         this._fillSelect(sel, this._entityChoices('event'), id, '— chưa gán —');
       }
       if (sel) sel.value = id;
-      this._fillPress(L.i, kind || 'any');
+      // Chỉ điền kiểu bấm cho cặp hành động CHƯA đặt, để lần dò thứ hai trên
+      // cùng một nút không đè mất cặp vừa đặt xong.
+      const w = $(`set-btn${L.i}-act`).value && !$(`set-btn${L.i}-act2`).value ? '2' : '';
+      this._fillPress(L.i, kind || 'any', w);
+      this._fillPress(L.i, $(`set-btn${L.i}-press${w === '2' ? '' : '2'}`).value || 'any',
+        w === '2' ? '' : '2');
       this._paintBindWarn(L.i);
 
       this._stopLearn(`Đã nhận: ${name} · ${PRESS_LABEL[kind] || kind || 'không rõ kiểu bấm'}`
@@ -480,27 +503,57 @@ class UpsPanelCard extends HTMLElement {
     }
   }
 
-  /** Cảnh báo khi một nút trên tường có thể cắt điện chỉ bằng một cú chạm. */
+  /** Danh sách thiết bị gán được vào ô "thiết bị khác". */
+  _targetChoices() {
+    const out = [];
+    for (const d of TARGET_DOMAINS) out.push(...this._entityChoices(d));
+    out.sort((x, y) => x.name.localeCompare(y.name, 'vi'));
+    return out;
+  }
+
+  /**
+   * Cảnh báo những cách cấu hình sẽ im lặng không chạy, hoặc chạy quá dễ.
+   *
+   * Im lặng không chạy là kiểu hỏng tệ nhất ở đây: bấm nút, không có gì xảy
+   * ra, và không có chỗ nào báo vì sao. Nên bắt hết ngay trên form.
+   */
   _paintBindWarn(i) {
     const $ = (id) => this.shadowRoot.getElementById(id);
     const warn = $(`btn${i}-warn`);
     if (!warn) return;
-    const act = $(`set-btn${i}-act`).value;
-    const press = $(`set-btn${i}-press`).value;
     const ent = $(`set-btn${i}-ent`).value;
-    const risky = BTN_RISKY.includes(act);
+    const target = $(`set-btn${i}-target`).value;
+    const acts = ['', '2'].map((w) => $(`set-btn${i}-act${w}`).value);
+    const presses = ['', '2'].map((w) => $(`set-btn${i}-press${w}`).value);
 
-    if (act && !ent) {
-      warn.style.display = '';
-      warn.textContent = 'Đã chọn hành động nhưng chưa chọn nút — sẽ không chạy.';
-    } else if (risky && press === 'any') {
-      warn.style.display = '';
-      warn.textContent = 'Hành động này làm mất điện. Nút nằm trên tường, ai đi qua '
-        + 'chạm phải cũng kích hoạt — nên chọn một kiểu bấm cụ thể (bấm hai lần '
-        + 'hoặc giữ) thay vì "bất kỳ".';
-    } else {
-      warn.style.display = 'none';
+    // Ô "thiết bị khác" chỉ hiện khi thật sự cần, cho form đỡ rối
+    const needTarget = acts.some((a) => BTN_NEEDS_TARGET.includes(a));
+    const row = $(`btn${i}-target-row`);
+    if (row) row.style.display = needTarget ? '' : 'none';
+
+    const msgs = [];
+    if (acts.some(Boolean) && !ent) {
+      msgs.push('Đã chọn hành động nhưng chưa chọn nút — sẽ không chạy.');
     }
+    if (needTarget && !target) {
+      msgs.push('Hành động này cần một thiết bị đích — chọn ở ô "Thiết bị khác".');
+    }
+    // Hai hành động cùng kiểu bấm thì cả hai cùng nổ, gần như luôn là nhầm
+    if (acts[0] && acts[1] && presses[0] === presses[1]) {
+      msgs.push('Hai hành động đang dùng CÙNG một kiểu bấm nên sẽ chạy cả hai '
+        + 'cùng lúc. Đặt hai kiểu bấm khác nhau (ví dụ một lần / hai lần).');
+    }
+    for (let k = 0; k < 2; k++) {
+      if (BTN_RISKY.includes(acts[k]) && presses[k] === 'any') {
+        msgs.push('Hành động làm mất điện đang để "bất kỳ kiểu bấm nào". Nút nằm '
+          + 'trên tường, ai đi qua chạm phải cũng kích hoạt — nên chọn một kiểu '
+          + 'bấm cụ thể.');
+        break;
+      }
+    }
+
+    warn.style.display = msgs.length ? '' : 'none';
+    warn.textContent = msgs.join(' ');
   }
 
   /** Entity trong một domain, lọc theo device_class nếu có, để đổ vào danh sách chọn. */
@@ -1055,14 +1108,20 @@ class UpsPanelCard extends HTMLElement {
       c.plug_entity || '', '— không điều khiển —');
     $('set-price').value = c.price_kwh ?? 3000;
 
-    for (const i of [1, 2]) {
+    const targets = this._targetChoices();
+    for (let i = 1; i <= NUM_SLOTS; i++) {
+      $(`btn${i}-name`).value = c[`btn${i}_name`] || BTN_DEFAULT_NAMES[i - 1];
       this._fillSelect($(`set-btn${i}-ent`), this._entityChoices('event'),
         c[`btn${i}_entity`] || '', '— chưa gán —');
-      this._fillPress(i, c[`btn${i}_press`] || 'any');
-      const act = c[`btn${i}_action`] || '';
-      $(`set-btn${i}-act`).innerHTML = BTN_ACTIONS.map(
-        ([v, t]) => `<option value="${v}"${v === act ? ' selected' : ''}>${t}</option>`
-      ).join('');
+      this._fillSelect($(`set-btn${i}-target`), targets,
+        c[`btn${i}_target`] || '', '— chưa chọn —');
+      for (const w of ['', '2']) {
+        this._fillPress(i, c[`btn${i}_press${w}`] || 'any', w);
+        const act = c[`btn${i}_action${w}`] || '';
+        $(`set-btn${i}-act${w}`).innerHTML = BTN_ACTIONS.map(
+          ([v, t]) => `<option value="${v}"${v === act ? ' selected' : ''}>${t}</option>`
+        ).join('');
+      }
       this._paintBindWarn(i);
     }
     const evs = this._entityChoices('event');
@@ -1100,13 +1159,24 @@ class UpsPanelCard extends HTMLElement {
       energy_entity: $('set-pw-energy').value,
       plug_entity: $('set-pw-plug').value,
       price_kwh: Number($('set-price').value) || 0,
-      btn1_entity: $('set-btn1-ent').value,
-      btn1_press: $('set-btn1-press').value || 'any',
-      btn1_action: $('set-btn1-act').value,
-      btn2_entity: $('set-btn2-ent').value,
-      btn2_press: $('set-btn2-press').value || 'any',
-      btn2_action: $('set-btn2-act').value,
+      ...this._collectBinds(),
     };
+  }
+
+  /** Sáu khoá cho mỗi khe gán nút, gom riêng cho gọn. */
+  _collectBinds() {
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    const out = {};
+    for (let i = 1; i <= NUM_SLOTS; i++) {
+      out[`btn${i}_name`] = $(`btn${i}-name`).value.trim() || BTN_DEFAULT_NAMES[i - 1];
+      out[`btn${i}_entity`] = $(`set-btn${i}-ent`).value;
+      out[`btn${i}_target`] = $(`set-btn${i}-target`).value;
+      for (const w of ['', '2']) {
+        out[`btn${i}_press${w}`] = $(`set-btn${i}-press${w}`).value || 'any';
+        out[`btn${i}_action${w}`] = $(`set-btn${i}-act${w}`).value;
+      }
+    }
+    return out;
   }
 
   async _saveSettings() {
@@ -1288,8 +1358,13 @@ class UpsPanelCard extends HTMLElement {
         /* --- gan nut vat ly --- */
         .bind { border:1px solid var(--divider-color); border-radius:8px;
                 padding:10px 12px; margin-bottom:10px; }
-        .bind .bt { font-size:.85rem; font-weight:600; margin-bottom:4px;
-                    color:var(--primary-text-color); }
+        .bind .bt { width:100%; box-sizing:border-box; font-size:.85rem; font-weight:700;
+                    margin-bottom:6px; padding:4px 6px; font-family:inherit;
+                    color:var(--primary-text-color); background:none;
+                    border:1px solid transparent; border-radius:6px; }
+        .bind .bt:hover, .bind .bt:focus { border-color:var(--divider-color);
+                    background:var(--card-background-color, #fff); outline:none; }
+        .bind .f.two select:first-of-type { flex:0 0 38%; }
         .bind .f { display:flex; align-items:center; gap:8px; margin-top:6px; }
         .bind .f > span { flex:0 0 78px; font-size:.75rem;
                           color:var(--secondary-text-color); }
@@ -1563,10 +1638,16 @@ class UpsPanelCard extends HTMLElement {
             không chết khi mất internet.</div>
           <div class="hint" id="ev-count" style="margin-bottom:8px"></div>
           <div class="bind" id="bind1">
-            <div class="bt">Nút 1</div>
+            <input class="bt" id="btn1-name" type="text" maxlength="40">
             <div class="f"><span>Nút nào</span><select id="set-btn1-ent"></select></div>
-            <div class="f"><span>Kiểu bấm</span><select id="set-btn1-press"></select></div>
-            <div class="f"><span>Làm gì</span><select id="set-btn1-act"></select></div>
+            <div class="f two"><span>Bấm</span>
+              <select id="set-btn1-press"></select>
+              <select id="set-btn1-act"></select></div>
+            <div class="f two"><span>Và khi bấm</span>
+              <select id="set-btn1-press2"></select>
+              <select id="set-btn1-act2"></select></div>
+            <div class="f" id="btn1-target-row" style="display:none">
+              <span>Thiết bị khác</span><select id="set-btn1-target"></select></div>
             <div class="learn-row">
               <button class="learn" id="btn1-learn">Bấm thử để dò</button>
               <div class="learn-msg" id="btn1-learn-msg"></div>
@@ -1574,15 +1655,38 @@ class UpsPanelCard extends HTMLElement {
             <div class="warn" id="btn1-warn" style="display:none"></div>
           </div>
           <div class="bind" id="bind2">
-            <div class="bt">Nút 2</div>
+            <input class="bt" id="btn2-name" type="text" maxlength="40">
             <div class="f"><span>Nút nào</span><select id="set-btn2-ent"></select></div>
-            <div class="f"><span>Kiểu bấm</span><select id="set-btn2-press"></select></div>
-            <div class="f"><span>Làm gì</span><select id="set-btn2-act"></select></div>
+            <div class="f two"><span>Bấm</span>
+              <select id="set-btn2-press"></select>
+              <select id="set-btn2-act"></select></div>
+            <div class="f two"><span>Và khi bấm</span>
+              <select id="set-btn2-press2"></select>
+              <select id="set-btn2-act2"></select></div>
+            <div class="f" id="btn2-target-row" style="display:none">
+              <span>Thiết bị khác</span><select id="set-btn2-target"></select></div>
             <div class="learn-row">
               <button class="learn" id="btn2-learn">Bấm thử để dò</button>
               <div class="learn-msg" id="btn2-learn-msg"></div>
             </div>
             <div class="warn" id="btn2-warn" style="display:none"></div>
+          </div>
+          <div class="bind" id="bind3">
+            <input class="bt" id="btn3-name" type="text" maxlength="40">
+            <div class="f"><span>Nút nào</span><select id="set-btn3-ent"></select></div>
+            <div class="f two"><span>Bấm</span>
+              <select id="set-btn3-press"></select>
+              <select id="set-btn3-act"></select></div>
+            <div class="f two"><span>Và khi bấm</span>
+              <select id="set-btn3-press2"></select>
+              <select id="set-btn3-act2"></select></div>
+            <div class="f" id="btn3-target-row" style="display:none">
+              <span>Thiết bị khác</span><select id="set-btn3-target"></select></div>
+            <div class="learn-row">
+              <button class="learn" id="btn3-learn">Bấm thử để dò</button>
+              <div class="learn-msg" id="btn3-learn-msg"></div>
+            </div>
+            <div class="warn" id="btn3-warn" style="display:none"></div>
           </div>
 
           <div class="sec">Cảnh báo</div>
@@ -1677,13 +1781,18 @@ class UpsPanelCard extends HTMLElement {
         this._loadReport();
       });
     }
-    for (const i of [1, 2]) {
+    for (let i = 1; i <= NUM_SLOTS; i++) {
       $(`set-btn${i}-ent`).addEventListener('change', () => {
-        this._fillPress(i, 'any');     // thiết bị khác thì kiểu bấm cũng khác
+        // Thiết bị khác thì tên kiểu bấm cũng khác -> phải đọc lại cả hai cặp
+        this._fillPress(i, 'any', '');
+        this._fillPress(i, 'any', '2');
         this._paintBindWarn(i);
       });
-      $(`set-btn${i}-press`).addEventListener('change', () => this._paintBindWarn(i));
-      $(`set-btn${i}-act`).addEventListener('change', () => this._paintBindWarn(i));
+      for (const w of ['', '2']) {
+        $(`set-btn${i}-press${w}`).addEventListener('change', () => this._paintBindWarn(i));
+        $(`set-btn${i}-act${w}`).addEventListener('change', () => this._paintBindWarn(i));
+      }
+      $(`set-btn${i}-target`).addEventListener('change', () => this._paintBindWarn(i));
       $(`btn${i}-learn`).addEventListener('click', () => {
         if (this._learn && this._learn.i === i) { this._stopLearn('Đã dừng.'); return; }
         this._startLearn(i);

@@ -1,4 +1,4 @@
-"""Gan nut cua cong tac ngu canh vao lenh bat/tat UPS.
+"""Gan nut cua cong tac ngu canh vao lenh dieu khien.
 
 Cong tac ngu canh (scene switch) KHONG phai thiet bi dieu khien duoc. Trong
 Home Assistant no hien ra la entity `event.*`: mot thiet bi DAU VAO, khong co
@@ -7,6 +7,14 @@ GIAN cua lan bam gan nhat, va moi lan bam lai doi thanh moc moi.
 
 Nen huong di duy nhat la: nghe entity do doi trang thai, roi tu goi dich vu
 len thiet bi dich. Day la viec module nay lam.
+
+Moi KHE gan duoc HAI hanh dong tren cung mot nut, phan biet bang kieu bam -
+vi du bam mot lan thi MO dien, bam hai lan thi CAT dien. Mot nut mot hanh
+dong thi muon vua bat vua tat phai hy sinh hai nut cho mot thiet bi.
+
+Dich vu goi qua domain `homeassistant` chu khong phai `switch`, de mot khe
+nham duoc vao bat ky thu gi: quat, den, dieu hoa, script, va ca scene (nhieu
+thiet bi hong ngoai chi vao HA duoc duoi dang scene tap-to-run cua hang).
 
 Ba cho de hong, deu da chan:
 
@@ -17,8 +25,8 @@ Ba cho de hong, deu da chan:
    STALE_AFTER giay.
 
 2. Bam nham. Nut nam tren tuong, ai di qua cung cham duoc, ma hanh dong thi
-   co the la cat dien ca tu rack. Nen cho chon KIEU BAM (bam don / bam dup /
-   giu) thay vi phan ung voi moi loai su kien.
+   co the la cat dien ca tu rack. Nen cho chon KIEU BAM thay vi phan ung voi
+   moi loai su kien.
 
 3. Tien to entity khong dong nhat. Thiet bi ESPHome tung duoc doi ten sau khi
    mot so entity da ton tai, nen entity cu giu ten cu con entity moi mang ten
@@ -46,8 +54,7 @@ STALE_AFTER = timedelta(seconds=60)
 # Hau to entity cua cong tac nguon UPS tren thiet bi ESPHome
 UPS_POWER_SUFFIX = "_ups_power"
 
-# Hanh dong -> (dich vu, muc tieu). Muc tieu giai ra luc chay, vi o cam do
-# nguoi dung chon trong Cai dat con cong tac UPS thi do theo hau to.
+# Hanh dong -> (dich vu, loai muc tieu). Muc tieu giai ra luc chay.
 ACTIONS = {
     "plug_on": ("turn_on", "plug"),
     "plug_off": ("turn_off", "plug"),
@@ -55,9 +62,16 @@ ACTIONS = {
     "ups_on": ("turn_on", "ups"),
     "ups_off": ("turn_off", "ups"),
     "ups_toggle": ("toggle", "ups"),
+    "target_on": ("turn_on", "target"),
+    "target_off": ("turn_off", "target"),
+    "target_toggle": ("toggle", "target"),
 }
 
-NUM_BUTTONS = 2
+# So khe gan. Doi so nay thi phai doi ca DEFAULT_CONFIG va giao dien.
+NUM_BUTTONS = 3
+
+# Hai cap (kieu bam, hanh dong) tren cung mot khe: hau to khoa cau hinh
+SLOTS = ("", "2")
 
 
 def find_by_suffix(hass: HomeAssistant, domain: str, suffix: str) -> str | None:
@@ -86,21 +100,26 @@ class UpsButtonEngine:
         return {**DEFAULT_CONFIG, **stored}
 
     def _bindings(self) -> dict[str, list[dict]]:
-        """{entity_id: [{press, action}, ...]} cho cac nut da cau hinh day du.
+        """{entity_id: [{press, action, slot}, ...]} cho cac cap da day du.
 
-        Mot entity co the duoc gan nhieu lan - vi du cung mot nut, bam don thi
-        bat o cam con giu thi tat UPS - nen gom theo entity thay vi 1-1.
+        Mot entity co the duoc gan nhieu lan - cung mot nut, bam mot lan thi
+        mo dien con bam hai lan thi cat - nen gom theo entity thay vi 1-1.
         """
         cfg = self.cfg
         out: dict[str, list[dict]] = {}
         for i in range(1, NUM_BUTTONS + 1):
             ent = (cfg.get(f"btn{i}_entity") or "").strip()
-            act = (cfg.get(f"btn{i}_action") or "").strip()
-            if not ent or act not in ACTIONS:
+            if not ent:
                 continue
-            out.setdefault(ent, []).append(
-                {"press": (cfg.get(f"btn{i}_press") or "any").strip(), "action": act}
-            )
+            for s in SLOTS:
+                act = (cfg.get(f"btn{i}_action{s}") or "").strip()
+                if act not in ACTIONS:
+                    continue
+                out.setdefault(ent, []).append({
+                    "press": (cfg.get(f"btn{i}_press{s}") or "any").strip(),
+                    "action": act,
+                    "slot": i,
+                })
         return out
 
     def start(self) -> None:
@@ -130,9 +149,11 @@ class UpsButtonEngine:
             self._unsub = None
         self._watching = []
 
-    def _target(self, kind: str) -> str | None:
+    def _target(self, kind: str, slot: int) -> str | None:
         if kind == "plug":
             return (self.cfg.get("plug_entity") or "").strip() or None
+        if kind == "target":
+            return (self.cfg.get(f"btn{slot}_target") or "").strip() or None
         return find_by_suffix(self.hass, "switch", UPS_POWER_SUFFIX)
 
     @callback
@@ -161,24 +182,29 @@ class UpsButtonEngine:
         for b in self._bindings().get(new.entity_id, []):
             if b["press"] not in ("any", "", kind):
                 continue
-            self.hass.async_create_task(self._run(new.entity_id, kind, b["action"]))
+            self.hass.async_create_task(
+                self._run(new.entity_id, kind, b["action"], b["slot"])
+            )
 
-    async def _run(self, entity_id: str, kind: str, action: str) -> None:
+    async def _run(self, entity_id: str, kind: str, action: str, slot: int) -> None:
         service, target_kind = ACTIONS[action]
-        target = self._target(target_kind)
+        target = self._target(target_kind, slot)
         if not target:
             _LOGGER.warning(
                 "UPS: nut %s (%s) muon %s nhung chua biet entity dich. "
-                "O cam thi chon trong Cai dat; cong tac UPS thi can thiet bi "
-                "ESPHome dang online.", entity_id, kind or "bam", action,
+                "O cam va thiet bi khac thi chon trong Cai dat; cong tac UPS "
+                "thi can thiet bi ESPHome dang online.",
+                entity_id, kind or "bam", action,
             )
             return
         if self.hass.states.get(target) is None:
             _LOGGER.warning("UPS: nut %s muon %s nhung %s khong ton tai",
                             entity_id, action, target)
             return
-        _LOGGER.info("UPS: nut %s (%s) -> switch.%s tren %s",
+        _LOGGER.info("UPS: nut %s (%s) -> homeassistant.%s tren %s",
                      entity_id, kind or "bam", service, target)
+        # Goi qua domain `homeassistant` de chay duoc voi moi loai thiet bi:
+        # switch, fan, light, climate, script va ca scene.
         await self.hass.services.async_call(
-            "switch", service, {"entity_id": target}, blocking=False
+            "homeassistant", service, {"entity_id": target}, blocking=False
         )
