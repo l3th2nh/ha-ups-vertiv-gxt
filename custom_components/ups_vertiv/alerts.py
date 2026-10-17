@@ -57,6 +57,16 @@ DEFAULT_CONFIG = {
     "energy_entity": "",     # sensor nang luong tich luy (kWh)
     "plug_entity": "",       # switch o cam, de bat/tat ngay tren panel
     "price_kwh": 3000,       # dong/kWh, de quy ra tien
+    # --- Gan nut cong tac ngu canh vao lenh bat/tat ---
+    # Cong tac ngu canh la thiet bi DAU VAO: trong HA no la entity `event.*`,
+    # khong bat/tat duoc, chi bao "vua co nguoi bam". Nen phai nghe no roi tu
+    # goi dich vu len o cam / cong tac UPS. Xem buttons.py.
+    "btn1_entity": "",       # entity event.* cua nut thu nhat
+    "btn1_press": "any",     # kieu bam: any | single_press | double_press | ...
+    "btn1_action": "",       # xem ACTIONS trong buttons.py
+    "btn2_entity": "",
+    "btn2_press": "any",
+    "btn2_action": "",
 }
 
 

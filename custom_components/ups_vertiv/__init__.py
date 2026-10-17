@@ -26,6 +26,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.helpers.storage import Store
 
 from .alerts import DEFAULT_CONFIG, UpsAlertEngine, resolve_entities, send_notification
+from .buttons import UpsButtonEngine
 from .const import (
     CARD_JS,
     DOMAIN,
@@ -109,10 +110,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def _retrack(_now):
             engine.refresh_tracking()
+            if store.get("buttons"):
+                store["buttons"].refresh_tracking()
 
         store["retrack_unsub"] = async_track_time_interval(
             hass, _retrack, RETRACK_INTERVAL
         )
+
+    # Engine nut bam: nghe cong tac ngu canh, goi lenh len o cam / UPS
+    if not store.get("buttons"):
+        buttons = UpsButtonEngine(hass)
+        buttons.start()
+        store["buttons"] = buttons
 
     _LOGGER.info("UPS Vertiv: panel tại /%s, engine cảnh báo đã chạy", PANEL_URL)
     return True
@@ -128,6 +137,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if store.get("engine"):
         store["engine"].stop()
         store["engine"] = None
+    if store.get("buttons"):
+        store["buttons"].stop()
+        store["buttons"] = None
 
     if PANEL_URL in hass.data.get(frontend.DATA_PANELS, {}):
         frontend.async_remove_panel(hass, PANEL_URL)
@@ -165,6 +177,8 @@ async def ws_save(hass: HomeAssistant, connection, msg) -> None:
     # Đổi cấu hình có thể đổi entity cần theo dõi
     if store.get("engine"):
         store["engine"].refresh_tracking()
+    if store.get("buttons"):
+        store["buttons"].refresh_tracking()
     connection.send_result(msg["id"], {"ok": True})
 
 

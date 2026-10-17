@@ -321,6 +321,38 @@ Chọn công tắc thì khối **Điều khiển UPS** có thêm một công t�
 đỏ *"Ổ cắm đang TẮT — UPS không có điện lưới và đang chạy bằng pin"* thay vì để người đọc
 tự đoán.
 
+### Gán nút công tắc ngữ cảnh
+
+Công tắc ngữ cảnh (scene switch) **không điều khiển được** — và không phải lỗi gì cả, nó
+là thiết bị **đầu vào**. Trong Home Assistant nó hiện ra là entity `event.*`: không có
+trạng thái bật/tắt, không có dịch vụ nào để gọi. `state` của nó là **dấu thời gian của lần
+bấm gần nhất**. Nên cách duy nhất là *nghe* nó rồi tự gọi lệnh lên thiết bị khác.
+
+**Cài đặt → Nút bấm vật lý**: mỗi nút chọn ba thứ — *nút nào* (entity `event.*`), *kiểu
+bấm*, và *làm gì*. Hành động gán được: bật / tắt / đảo **ổ cắm**, và bật / tắt / đảo
+**UPS** (`SON` / `SOFF`).
+
+Danh sách kiểu bấm **đọc thẳng từ thuộc tính `event_types` của chính entity đó**, không
+đoán. Mỗi tích hợp đặt tên một khác — `single_press`, `single`, `multi_press_1`… — đoán
+sai thì ô chọn ra một giá trị mà thiết bị không bao giờ gửi, và nút im lặng không làm gì.
+
+Ba cái bẫy đã chặn sẵn trong [buttons.py](custom_components/ups_vertiv/buttons.py):
+
+- **Home Assistant khởi động lại.** Entity `event.*` khôi phục mốc thời gian cũ, sinh ra
+  một lần đổi trạng thái `None → mốc cũ`. Không chặn thì **mỗi lần HA khởi động lại là
+  một cú bấm tự động** — có thể là bấm vào nút tắt UPS. Chặn bằng hai lớp: bỏ qua khi
+  `old_state` là `None`, và bỏ qua sự kiện cũ hơn 60 giây.
+- **Bấm nhầm.** Nút nằm trên tường, ai đi qua chạm phải cũng kích hoạt. Nếu hành động làm
+  mất điện mà kiểu bấm để "bất kỳ", panel hiện cảnh báo đỏ ngay trong Cài đặt và khuyên
+  đổi sang *bấm hai lần* hoặc *giữ*.
+- **Tiền tố entity không đồng nhất.** Dò công tắc UPS theo **hậu tố** `_ups_power` thay vì
+  ghép từ một tiền tố — thiết bị ESPHome từng được đổi tên sau khi một số entity đã tồn
+  tại, nên entity cũ giữ tên cũ còn entity mới mang tên mới.
+
+> ⚠️ **Nút "Mở UPS" chỉ chạy được khi UPS đang bật.** Lệnh `SON` đi qua mạch ESP32, mà mạch
+> lấy điện từ đầu ra của UPS — UPS tắt là mạch chết theo, không còn đường nào nhận lệnh.
+> Nút *bật/tắt ổ cắm* thì không vướng chuyện này vì ổ cắm có điện và WiFi riêng.
+
 ### Tab Tiêu thụ — báo cáo theo ngày / tháng / năm
 
 | Chế độ | Mỗi cột là | Chu kỳ thống kê |
