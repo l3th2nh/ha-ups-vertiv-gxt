@@ -18,7 +18,7 @@
 // Ky tu xuong dong cho hop thoai confirm. Viet bang fromCharCode vi chuoi
 // escape tung bi cong cu ghi file bien thanh xuong dong THAT, lam vo cu phap.
 const BR = String.fromCharCode(10);
-const UPS_CARD_VERSION = '4.11.0';
+const UPS_CARD_VERSION = '4.11.1';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -79,6 +79,7 @@ const PRESS_LABEL = {
   triple_press: 'Bấm ba lần', long_press: 'Giữ',
   single: 'Bấm một lần', double: 'Bấm hai lần', triple: 'Bấm ba lần',
   hold: 'Giữ', press: 'Bấm', release: 'Thả ra',
+  click: 'Bấm một lần', double_click: 'Bấm hai lần', triple_click: 'Bấm ba lần',
   initial_press: 'Vừa bấm xuống', short_release: 'Thả ra nhanh',
   long_release: 'Thả sau khi giữ', multi_press_1: 'Bấm một lần',
   multi_press_2: 'Bấm hai lần', multi_press_3: 'Bấm ba lần',
@@ -1556,6 +1557,10 @@ class UpsPanelCard extends HTMLElement {
             <b>đầu vào</b>: Home Assistant chỉ biết "vừa có người bấm", không bật/tắt
             được nó. Gán ở đây thì mỗi lần bấm, integration sẽ tự gọi lệnh lên ổ cắm
             hoặc lên UPS.</div>
+          <div class="hint" style="margin-bottom:8px">Nếu cùng một công tắc hiện ra
+            <b>hai lần</b> (ví dụ vừa qua Matter vừa qua cloud của hãng), chọn bản
+            <b>Matter</b>: nó chạy nội bộ nên tới nơi sớm hơn vài phần mười giây và
+            không chết khi mất internet.</div>
           <div class="hint" id="ev-count" style="margin-bottom:8px"></div>
           <div class="bind" id="bind1">
             <div class="bt">Nút 1</div>
