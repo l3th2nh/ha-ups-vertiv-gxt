@@ -18,7 +18,7 @@
 // Ky tu xuong dong cho hop thoai confirm. Viet bang fromCharCode vi chuoi
 // escape tung bi cong cu ghi file bien thanh xuong dong THAT, lam vo cu phap.
 const BR = String.fromCharCode(10);
-const UPS_CARD_VERSION = '4.10.0';
+const UPS_CARD_VERSION = '4.11.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -389,6 +389,94 @@ class UpsPanelCard extends HTMLElement {
       opts.push(`<option value="${chosen}" selected>${chosen} (không còn)</option>`);
     }
     el.innerHTML = opts.join('');
+  }
+
+  /**
+   * Chế độ dò: bấm nút thật, panel tự nhận ra đó là entity nào.
+   *
+   * Chọn từ danh sách thả xuống gần như không dùng được: một công tắc 4 nút ra
+   * bốn entity tên na ná nhau (`..._button_1` … `_button_4`), mà thứ tự đánh số
+   * KHÔNG nhất thiết khớp thứ tự nút trên mặt công tắc. Cách duy nhất chắc chắn
+   * là bấm thử rồi xem cái nào vừa đổi.
+   *
+   * Entity `event.*` mang state là dấu thời gian của lần bấm gần nhất, nên chỉ
+   * cần chụp lại trạng thái mọi entity `event.*` rồi xem cái nào đổi.
+   */
+  _startLearn(i) {
+    if (!this._hass) return;
+    const ids = Object.keys(this._hass.states).filter((id) => id.startsWith('event.'));
+    const snap = {};
+    for (const id of ids) snap[id] = this._hass.states[id].state;
+    this._learn = { i, until: Date.now() + 25000, snap, n: ids.length };
+    if (this._learnTimer) clearInterval(this._learnTimer);
+    // Đồng hồ đếm ngược chạy riêng: nếu chỉ dựa vào hass đẩy dữ liệu thì lúc
+    // nhà im lìm sẽ không có gì cập nhật, nhìn như panel bị treo.
+    this._learnTimer = setInterval(() => this._paintLearn(), 500);
+    this._paintLearn();
+  }
+
+  _stopLearn(msg, hit) {
+    const L = this._learn;
+    this._learn = null;
+    if (this._learnTimer) { clearInterval(this._learnTimer); this._learnTimer = null; }
+    if (!L) return;
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    const btn = $(`btn${L.i}-learn`);
+    if (btn) { btn.className = 'learn'; btn.textContent = 'Bấm thử để dò'; }
+    const el = $(`btn${L.i}-learn-msg`);
+    if (el) { el.className = 'learn-msg' + (hit ? ' hit' : ''); el.textContent = msg; }
+  }
+
+  _paintLearn() {
+    const L = this._learn;
+    if (!L) return;
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    const left = Math.max(0, Math.ceil((L.until - Date.now()) / 1000));
+    if (left === 0) {
+      this._stopLearn(L.n
+        ? `Không nhận được lần bấm nào trong ${L.n} nút đang có. Bấm lại và `
+          + 'thử giữ lâu hơn, hoặc kiểm tra pin của công tắc.'
+        : 'Home Assistant không có entity event.* nào — tích hợp của công tắc '
+          + 'chưa tạo entity cho nút bấm.');
+      return;
+    }
+    const btn = $(`btn${L.i}-learn`);
+    if (btn) { btn.className = 'learn on'; btn.textContent = 'Đang nghe…'; }
+    const el = $(`btn${L.i}-learn-msg`);
+    if (el) {
+      el.className = 'learn-msg';
+      el.textContent = `Hãy bấm nút thật trên tường ngay bây giờ (còn ${left}s). `
+        + `Đang theo dõi ${L.n} nút.`;
+    }
+  }
+
+  /** Gọi mỗi lần hass đẩy dữ liệu: xem có entity event.* nào vừa đổi không. */
+  _checkLearn() {
+    const L = this._learn;
+    if (!L || !this._hass) return;
+    for (const id of Object.keys(L.snap)) {
+      const st = this._hass.states[id];
+      if (!st) continue;
+      const v = st.state;
+      if (v === L.snap[id] || v === 'unknown' || v === 'unavailable' || !v) continue;
+
+      const $ = (id2) => this.shadowRoot.getElementById(id2);
+      const kind = (st.attributes && st.attributes.event_type) || '';
+      const name = (st.attributes && st.attributes.friendly_name) || id;
+
+      // Entity vừa bấm có thể chưa nằm trong danh sách đã dựng (xuất hiện muộn)
+      const sel = $(`set-btn${L.i}-ent`);
+      if (sel && !Array.from(sel.options || []).some((o) => o.value === id)) {
+        this._fillSelect(sel, this._entityChoices('event'), id, '— chưa gán —');
+      }
+      if (sel) sel.value = id;
+      this._fillPress(L.i, kind || 'any');
+      this._paintBindWarn(L.i);
+
+      this._stopLearn(`Đã nhận: ${name} · ${PRESS_LABEL[kind] || kind || 'không rõ kiểu bấm'}`
+        + ' — nhớ bấm Lưu.', true);
+      return;
+    }
   }
 
   /** Cảnh báo khi một nút trên tường có thể cắt điện chỉ bằng một cú chạm. */
@@ -976,6 +1064,17 @@ class UpsPanelCard extends HTMLElement {
       ).join('');
       this._paintBindWarn(i);
     }
+    const evs = this._entityChoices('event');
+    const cnt = $('ev-count');
+    if (cnt) {
+      cnt.className = evs.length ? 'hint' : 'hint alert';
+      cnt.textContent = evs.length
+        ? `Home Assistant đang có ${evs.length} nút bấm (entity event.*). `
+          + 'Không chắc nút nào là nút nào thì bấm "Bấm thử để dò" rồi bấm nút thật.'
+        : 'Home Assistant chưa có entity event.* nào. Tích hợp của công tắc chưa '
+          + 'tạo entity cho nút bấm — mở Công cụ cho nhà phát triển → Trạng thái '
+          + 'và gõ "event." để kiểm tra lại.';
+    }
   }
 
   _collectSettings() {
@@ -1200,6 +1299,14 @@ class UpsPanelCard extends HTMLElement {
                        font-size:.82rem; }
         .bind .warn { margin-top:8px; font-size:.75rem; line-height:1.5;
                       color:#c62828; }
+        .bind .learn-row { display:flex; align-items:center; gap:10px; margin-top:8px; }
+        .bind .learn { flex:0 0 auto; padding:6px 14px; border:1px solid var(--primary-color, #03a9f4);
+                       border-radius:6px; background:none; color:var(--primary-color, #03a9f4);
+                       font-family:inherit; font-size:.78rem; font-weight:600; cursor:pointer; }
+        .bind .learn.on { background:var(--primary-color, #03a9f4); color:#fff; }
+        .bind .learn-msg { flex:1 1 auto; font-size:.75rem; line-height:1.4;
+                           color:var(--secondary-text-color); }
+        .bind .learn-msg.hit { color:#2e7d32; font-weight:600; }
 
         /* --- bao cao tieu thu --- */
         .seg { display:flex; gap:0; margin-bottom:12px; border:1px solid var(--divider-color);
@@ -1449,11 +1556,16 @@ class UpsPanelCard extends HTMLElement {
             <b>đầu vào</b>: Home Assistant chỉ biết "vừa có người bấm", không bật/tắt
             được nó. Gán ở đây thì mỗi lần bấm, integration sẽ tự gọi lệnh lên ổ cắm
             hoặc lên UPS.</div>
+          <div class="hint" id="ev-count" style="margin-bottom:8px"></div>
           <div class="bind" id="bind1">
             <div class="bt">Nút 1</div>
             <div class="f"><span>Nút nào</span><select id="set-btn1-ent"></select></div>
             <div class="f"><span>Kiểu bấm</span><select id="set-btn1-press"></select></div>
             <div class="f"><span>Làm gì</span><select id="set-btn1-act"></select></div>
+            <div class="learn-row">
+              <button class="learn" id="btn1-learn">Bấm thử để dò</button>
+              <div class="learn-msg" id="btn1-learn-msg"></div>
+            </div>
             <div class="warn" id="btn1-warn" style="display:none"></div>
           </div>
           <div class="bind" id="bind2">
@@ -1461,6 +1573,10 @@ class UpsPanelCard extends HTMLElement {
             <div class="f"><span>Nút nào</span><select id="set-btn2-ent"></select></div>
             <div class="f"><span>Kiểu bấm</span><select id="set-btn2-press"></select></div>
             <div class="f"><span>Làm gì</span><select id="set-btn2-act"></select></div>
+            <div class="learn-row">
+              <button class="learn" id="btn2-learn">Bấm thử để dò</button>
+              <div class="learn-msg" id="btn2-learn-msg"></div>
+            </div>
             <div class="warn" id="btn2-warn" style="display:none"></div>
           </div>
 
@@ -1563,6 +1679,10 @@ class UpsPanelCard extends HTMLElement {
       });
       $(`set-btn${i}-press`).addEventListener('change', () => this._paintBindWarn(i));
       $(`set-btn${i}-act`).addEventListener('change', () => this._paintBindWarn(i));
+      $(`btn${i}-learn`).addEventListener('click', () => {
+        if (this._learn && this._learn.i === i) { this._stopLearn('Đã dừng.'); return; }
+        this._startLearn(i);
+      });
     }
     $('pw-prev').addEventListener('click', () => this._rptStep(-1));
     $('pw-next').addEventListener('click', () => this._rptStep(1));
@@ -1750,6 +1870,7 @@ class UpsPanelCard extends HTMLElement {
     }
 
     this._updatePower();
+    this._checkLearn();
 
     const src = this._hass.states[this._id('sensor', 'mode_text')];
     $('foot').textContent = src && (src.last_updated || src.last_changed)

@@ -332,6 +332,18 @@ bấm gần nhất**. Nên cách duy nhất là *nghe* nó rồi tự gọi lệ
 bấm*, và *làm gì*. Hành động gán được: bật / tắt / đảo **ổ cắm**, và bật / tắt / đảo
 **UPS** (`SON` / `SOFF`).
 
+**Không biết nút nào là nút nào thì bấm "Bấm thử để dò"** rồi bấm nút thật trên tường.
+Panel chụp trạng thái mọi entity `event.*`, chờ 25 giây, và cái nào đổi thì đó là nó —
+điền luôn cả entity lẫn kiểu bấm vừa dùng.
+
+Chọn tay từ danh sách gần như không dùng được: một công tắc 4 nút ra bốn entity tên na ná
+nhau (`..._button_1` … `_button_4`), mà **thứ tự đánh số không nhất thiết khớp thứ tự nút
+trên mặt công tắc**. Bấm thử là cách duy nhất chắc chắn.
+
+Phần đầu mục cũng in ra **đang có bao nhiêu entity `event.*`** trong HA. Nếu là 0 thì tích
+hợp của công tắc chưa tạo entity cho nút bấm — kiểm lại ở *Công cụ cho nhà phát triển →
+Trạng thái*, lọc `event.`.
+
 Danh sách kiểu bấm **đọc thẳng từ thuộc tính `event_types` của chính entity đó**, không
 đoán. Mỗi tích hợp đặt tên một khác — `single_press`, `single`, `multi_press_1`… — đoán
 sai thì ô chọn ra một giá trị mà thiết bị không bao giờ gửi, và nút im lặng không làm gì.
