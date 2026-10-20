@@ -18,7 +18,7 @@
 // Ky tu xuong dong cho hop thoai confirm. Viet bang fromCharCode vi chuoi
 // escape tung bi cong cu ghi file bien thanh xuong dong THAT, lam vo cu phap.
 const BR = String.fromCharCode(10);
-const UPS_CARD_VERSION = '4.12.0';
+const UPS_CARD_VERSION = '4.13.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -501,6 +501,37 @@ class UpsPanelCard extends HTMLElement {
         + ' — nhớ bấm Lưu.', true);
       return;
     }
+  }
+
+  /**
+   * Bắt MAC và IP sai ngay trên form.
+   *
+   * Một ký tự sai trong MAC là đủ để gói đánh thức không bao giờ tới nơi, mà
+   * KHÔNG có thông báo lỗi nào: gói vẫn gửi đi bình thường, chỉ là không máy
+   * nào nhận. Không bắt ở đây thì người dùng sẽ ngồi đoán xem BIOS, card mạng
+   * hay router hỏng.
+   */
+  _paintPcWarn() {
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    const el = $('pc-warn');
+    if (!el) return;
+    const mac = $('set-pc-mac').value.trim();
+    const ip = $('set-pc-ip').value.trim();
+    const msgs = [];
+
+    const hex = mac.replace(/[^0-9a-fA-F]/g, '');
+    if (mac && hex.length !== 12) {
+      msgs.push(`MAC phải có đúng 12 ký tự hex, đang có ${hex.length}.`);
+    }
+    if (ip && !/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) {
+      msgs.push('Địa chỉ IP không đúng dạng.');
+    }
+    if (mac && !ip) msgs.push('Có MAC nhưng chưa có IP — sẽ bật được nhưng không đọc được trạng thái.');
+    if (ip && !mac) msgs.push('Có IP nhưng chưa có MAC — sẽ đọc được trạng thái nhưng không bật được.');
+
+    el.className = msgs.length ? 'hint alert' : 'hint';
+    el.style.display = msgs.length ? '' : 'none';
+    el.textContent = msgs.join(' ');
   }
 
   /** Danh sách thiết bị gán được vào ô "thiết bị khác". */
@@ -1108,6 +1139,13 @@ class UpsPanelCard extends HTMLElement {
       c.plug_entity || '', '— không điều khiển —');
     $('set-price').value = c.price_kwh ?? 3000;
 
+    $('set-pc-mac').value = c.pc_mac || '';
+    $('set-pc-ip').value = c.pc_ip || '';
+    $('set-pc-port').value = c.pc_port ?? 445;
+    this._fillSelect($('set-pc-off'), this._targetChoices(),
+      c.pc_off_entity || '', '— không tắt được —');
+    this._paintPcWarn();
+
     const targets = this._targetChoices();
     for (let i = 1; i <= NUM_SLOTS; i++) {
       $(`btn${i}-name`).value = c[`btn${i}_name`] || BTN_DEFAULT_NAMES[i - 1];
@@ -1159,6 +1197,10 @@ class UpsPanelCard extends HTMLElement {
       energy_entity: $('set-pw-energy').value,
       plug_entity: $('set-pw-plug').value,
       price_kwh: Number($('set-price').value) || 0,
+      pc_mac: $('set-pc-mac').value.trim(),
+      pc_ip: $('set-pc-ip').value.trim(),
+      pc_port: Number($('set-pc-port').value) || 445,
+      pc_off_entity: $('set-pc-off').value,
       ...this._collectBinds(),
     };
   }
@@ -1325,7 +1367,7 @@ class UpsPanelCard extends HTMLElement {
                margin-bottom:8px; }
         .row .lb { font-size:.85rem; color:var(--primary-text-color); }
         .row .hint { font-size:.72rem; color:var(--secondary-text-color); margin-top:2px; }
-        .row select, .row input[type=number] {
+        .row select, .row input[type=number], .row input[type=text] {
           font-family:inherit; font-size:.85rem; padding:6px 8px; border-radius:6px;
           border:1px solid var(--divider-color); background:var(--card-background-color);
           color:var(--primary-text-color); max-width:100%;
@@ -1600,6 +1642,14 @@ class UpsPanelCard extends HTMLElement {
             </div>
             <label class="sw"><input type="checkbox" id="ctl-plug"><span class="sl"></span></label>
           </div>
+          <div class="row danger" id="ctl-pc-row">
+            <div>
+              <div class="lb">Bật / tắt máy tính</div>
+              <div class="hint" id="ctl-pc-hint">Bật bằng Wake-on-LAN. Máy mất
+                khoảng 30–60 giây mới lên, ô này chỉ bật khi máy thật sự trả lời.</div>
+            </div>
+            <label class="sw"><input type="checkbox" id="ctl-pc"><span class="sl"></span></label>
+          </div>
           <div class="hint ctl-note" id="ctl-msg"></div>
 
           <div class="sec">Đo tiêu thụ điện</div>
@@ -1626,6 +1676,39 @@ class UpsPanelCard extends HTMLElement {
             <div class="lb">Giá điện (đ/kWh)</div>
             <input type="number" id="set-price" min="0" step="100" style="width:90px">
           </div>
+
+          <div class="sec">Bật / Tắt máy tính</div>
+          <div class="hint" style="margin-bottom:8px">Bật máy bằng
+            <b>Wake-on-LAN</b>: một gói UDP gửi tới card mạng, không cần cài gì
+            trên máy. Trạng thái đọc bằng cách mở thử một kết nối TCP — không
+            dùng ping, vì ping cần quyền raw socket mà container của Home
+            Assistant thường thiếu, rồi im lặng báo máy đã tắt.</div>
+          <div class="row">
+            <div class="lb">Địa chỉ MAC (card có dây)</div>
+            <input type="text" id="set-pc-mac" placeholder="10:7B:44:16:25:5D" style="width:180px">
+          </div>
+          <div class="row">
+            <div class="lb">Địa chỉ IP</div>
+            <input type="text" id="set-pc-ip" placeholder="192.168.0.220" style="width:140px">
+          </div>
+          <div class="row">
+            <div>
+              <div class="lb">Cổng để dò trạng thái</div>
+              <div class="hint">445 là SMB của Windows, luôn mở sẵn. Máy Linux
+                thì dùng 22.</div>
+            </div>
+            <input type="number" id="set-pc-port" min="1" max="65535" style="width:84px">
+          </div>
+          <div class="row">
+            <div>
+              <div class="lb">Cách TẮT máy</div>
+              <div class="hint">Wake-on-LAN chỉ đánh thức được, <b>không tắt được</b>.
+                Muốn tắt thì cần một thứ đang chạy sẵn trên máy nhận lệnh — chọn
+                script hoặc nút đã làm việc đó. Bỏ trống thì nút chỉ bật được.</div>
+            </div>
+            <select id="set-pc-off"></select>
+          </div>
+          <div class="hint" id="pc-warn" style="display:none"></div>
 
           <div class="sec">Nút bấm vật lý</div>
           <div class="hint" style="margin-bottom:8px">Công tắc ngữ cảnh là thiết bị
@@ -1781,6 +1864,19 @@ class UpsPanelCard extends HTMLElement {
         this._loadReport();
       });
     }
+    for (const id of ['set-pc-mac', 'set-pc-ip']) {
+      $(id).addEventListener('input', () => this._paintPcWarn());
+    }
+    $('ctl-pc').addEventListener('change', (ev) => {
+      const on = ev.target.checked;
+      if (!on) {
+        const warn = 'TẮT MÁY TÍNH. Việc đang làm dở mà chưa lưu sẽ mất. '
+          + 'Chắc chắn tắt?';
+        if (!confirm(warn)) { this._update(); return; }
+      }
+      // Máy mất 30-60 giây mới lên, nên chờ lâu hơn hẳn các công tắc khác.
+      this._toggleSwitch('pc_power', on, 'Máy tính', null, on ? 120000 : 60000);
+    });
     for (let i = 1; i <= NUM_SLOTS; i++) {
       $(`set-btn${i}-ent`).addEventListener('change', () => {
         // Thiết bị khác thì tên kiểu bấm cũng khác -> phải đọc lại cả hai cặp
@@ -1859,7 +1955,7 @@ class UpsPanelCard extends HTMLElement {
     const plugRow = $('ctl-plug-row');
     if (plugRow) plugRow.style.display = plugEnt ? '' : 'none';
     const CONTROLS = [['eco_mode', 'ctl-eco', null], ['buzzer', 'ctl-buzzer', null],
-                      ['ups_power', 'ctl-power', null]];
+                      ['ups_power', 'ctl-power', null], ['pc_power', 'ctl-pc', null]];
     if (plugEnt) CONTROLS.push(['plug', 'ctl-plug', plugEnt]);
     for (const [key, id, explicit] of CONTROLS) {
       const el = $(id);
@@ -1876,6 +1972,17 @@ class UpsPanelCard extends HTMLElement {
       // KHÔNG disable: ô bị khoá mà không giải thích gì thì người dùng không
       // biết vì sao. Cứ cho bấm, rồi báo lỗi cụ thể nếu không gửi được.
       el.checked = st === 'on';
+    }
+
+    const pcEnt = this._hass.states[this._id('switch', 'pc_power')];
+    const pcHint = $('ctl-pc-hint');
+    if (pcHint) {
+      pcHint.textContent = !pcEnt
+        ? 'Chưa có entity — tải lại tích hợp UPS Vertiv rồi Ctrl+F5.'
+        : (pcEnt.state === 'unavailable'
+            ? 'Chưa khai báo MAC và IP của máy — điền ở mục "Bật / Tắt máy tính" bên dưới.'
+            : 'Bật bằng Wake-on-LAN. Máy mất khoảng 30–60 giây mới lên, ô này chỉ '
+              + 'bật khi máy thật sự trả lời.');
     }
 
     const missing = !modeEnt;
@@ -1996,7 +2103,7 @@ class UpsPanelCard extends HTMLElement {
    *  KHÔNG tự đổi ô tick: trạng thái thật do thiết bị công bố sau khi UPS xác
    *  nhận bằng QFLAG. Nếu UPS từ chối, ô tick sẽ tự quay về đúng thực tế.
    */
-  async _toggleSwitch(key, on, label, explicitId) {
+  async _toggleSwitch(key, on, label, explicitId, waitMs) {
     const msg = this.shadowRoot.getElementById('ctl-msg');
     const eid = explicitId || this._id('switch', key);
 
@@ -2030,7 +2137,10 @@ class UpsPanelCard extends HTMLElement {
       this._update();
       return;
     }
-    // Khong xac nhan trong 6s -> bo cho, tra cong tac ve trang thai that
+    // Khong xac nhan trong han -> bo cho, tra cong tac ve trang thai that.
+    // Han mac dinh 6s hop voi UPS (tra loi qua QFLAG trong mot nhip hoi), nhung
+    // may tinh thi mat 30-60 giay moi khoi dong xong - dung 6s o day se bao
+    // "lenh co the bi tu choi" trong khi may dang khoi dong binh thuong.
     setTimeout(() => {
       if (this._pending && this._pending[key] !== undefined) {
         delete this._pending[key];
@@ -2040,7 +2150,7 @@ class UpsPanelCard extends HTMLElement {
         msg.textContent = `${label}: đã xác nhận.`;
         setTimeout(() => { if (msg.textContent.endsWith('đã xác nhận.')) msg.textContent = ''; }, 3000);
       }
-    }, 6000);
+    }, waitMs || 6000);
   }
 
   /** Xoá nhật ký: ghi một mốc thời gian, panel chỉ hiện sự kiện sau mốc đó. */

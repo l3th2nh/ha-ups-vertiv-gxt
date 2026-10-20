@@ -84,6 +84,13 @@ DEFAULT_CONFIG = {
     "btn3_action": "",
     "btn3_press2": "any",
     "btn3_action2": "",
+    # --- Bat/tat may tinh qua Wake-on-LAN ---
+    # Chieu BAT tron ven (goi UDP). Chieu TAT thi WoL khong lam duoc, nen phai
+    # muon mot entity khac (script/button) do nguoi dung tu dung - xem switch.py
+    "pc_mac": "",            # MAC cua card mang CO DAY, khong phai WiFi
+    "pc_ip": "",             # IP tinh, de do xem may con song
+    "pc_port": 445,          # cong TCP de do; 445 = SMB, Windows luon mo
+    "pc_off_entity": "",     # entity kich hoat de TAT may
 }
 
 

@@ -321,6 +321,55 @@ Chọn công tắc thì khối **Điều khiển UPS** có thêm một công t�
 đỏ *"Ổ cắm đang TẮT — UPS không có điện lưới và đang chạy bằng pin"* thay vì để người đọc
 tự đoán.
 
+### Bật / tắt máy tính qua Wake-on-LAN
+
+**Cài đặt → Bật / Tắt máy tính**: điền MAC của card mạng **có dây**, IP, cổng để dò
+trạng thái, và (tuỳ chọn) cách tắt. Integration tự tạo entity `switch.ups_vertiv_pc_power`,
+dùng được cả ở dashboard khác lẫn trong phần gán nút ở trên.
+
+| Chiều | Cách làm | Chạy được không |
+|---|---|---|
+| **Bật** | Gói UDP 102 byte (6×`FF` + MAC lặp 16 lần) gửi tới `x.x.x.255` và `255.255.255.255`, cổng 9 và 7 | Trọn vẹn, không cần cài gì trên máy |
+| **Trạng thái** | Mở thử một kết nối **TCP** (mặc định cổng 445 — SMB của Windows) | Trọn vẹn |
+| **Tắt** | Kích hoạt một entity do bạn chọn (`script` / `button`) | **Cần một thứ đang chạy sẵn trên máy** |
+
+Dùng TCP chứ **không dùng ping**: ping cần raw socket, container của Home Assistant
+thường thiếu quyền đó rồi im lặng trả về "không trả lời" — tức là báo máy đã tắt trong
+khi nó đang chạy.
+
+Panel bắt MAC/IP sai ngay trên form. Một ký tự sai trong MAC là đủ để gói đánh thức
+không bao giờ tới nơi **mà không có thông báo lỗi nào**: gói vẫn gửi đi bình thường, chỉ
+là không máy nào nhận — không bắt ở đây thì sẽ ngồi đoán xem BIOS, card mạng hay router
+hỏng.
+
+Ô tick **không tự bật ngay sau khi bấm**: máy mất 30–60 giây mới lên, báo "bật" ngay là
+nói dối. Hạn chờ xác nhận cho máy tính là 120 giây thay vì 6 giây như các công tắc UPS.
+
+**Ba thứ phải đúng thì Wake-on-LAN mới chạy:**
+
+1. **BIOS**: bật *Power On By PCI-E/PCI* (ASUS X299: Advanced → APM Configuration).
+2. **Card mạng**: Device Manager → card mạng → Power Management → *Allow this device to
+   wake the computer* + *Only allow a magic packet*.
+3. **Tắt Fast Startup** của Windows. Đây là thủ phạm hay gặp nhất: "shutdown" khi còn bật
+   Fast Startup thực chất là ngủ đông lai, và nhiều card Intel bỏ trạng thái chờ đánh
+   thức ở chế độ đó. Kiểm tra bằng PowerShell quyền admin:
+
+   ```powershell
+   # 1 = đang bật (phá WoL sau khi shutdown)
+   (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power').HiberbootEnabled
+   # tắt đi
+   Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' HiberbootEnabled 0
+   ```
+
+**Chiều tắt** thì Wake-on-LAN không làm được, và Windows không nhận lệnh tắt từ xa nếu
+không có gì đang nghe sẵn. Hai đường thực tế:
+
+- **HASS.Agent** — ứng dụng Windows, nói chuyện qua MQTT. Cho luôn `button` tắt máy, ngủ,
+  khoá màn hình, cộng thêm cảm biến CPU/RAM. Hợp nếu đã có broker MQTT trong nhà.
+- **OpenSSH Server** — tính năng có sẵn của Windows, không phải cài thêm phần mềm ngoài.
+  Bật nó, tạo khoá, rồi một `shell_command` trong HA chạy `ssh user@máy "shutdown /s /t 0"`,
+  bọc lại thành `script.tat_pc` và chọn script đó ở ô *Cách TẮT máy*.
+
 ### Gán nút công tắc ngữ cảnh
 
 Công tắc ngữ cảnh (scene switch) **không điều khiển được** — và không phải lỗi gì cả, nó

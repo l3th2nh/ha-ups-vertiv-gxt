@@ -27,6 +27,9 @@ from homeassistant.helpers.storage import Store
 
 from .alerts import DEFAULT_CONFIG, UpsAlertEngine, resolve_entities, send_notification
 from .buttons import UpsButtonEngine
+
+# Platform do integration nay tu tao entity
+PLATFORMS = ["switch"]
 from .const import (
     CARD_JS,
     DOMAIN,
@@ -123,12 +126,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         buttons.start()
         store["buttons"] = buttons
 
+    # Cong tac bat/tat PC (Wake-on-LAN) la mot entity that, nen dashboard khac
+    # va ca phan gan nut cong tac ngu canh deu dung lai duoc.
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
     _LOGGER.info("UPS Vertiv: panel tại /%s, engine cảnh báo đã chạy", PANEL_URL)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Gỡ panel và dừng engine khi xoá integration."""
+    await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     store = hass.data.get(DOMAIN, {})
 
     if store.get("retrack_unsub"):
