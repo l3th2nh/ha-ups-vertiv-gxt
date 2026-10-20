@@ -361,11 +361,35 @@ nói dối. Hạn chờ xác nhận cho máy tính là 120 giây thay vì 6 giâ
    Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' HiberbootEnabled 0
    ```
 
+#### Tắt PC rồi cắt điện — một nút, có chờ
+
+Entity `button.ups_vertiv_shutdown_all` chạy cả chuỗi:
+
+1. Kích hoạt entity *Cách TẮT máy*.
+2. Hỏi lại máy mỗi 5 giây cho tới khi **không còn trả lời** (tối đa *Chờ máy tắt tối đa*).
+3. Chờ thêm *Chờ thêm sau khi máy im* — ngừng trả lời mạng nghĩa là Windows đã vào giai
+   đoạn cuối, nhưng chưa chắc đã ghi xong đĩa.
+4. Cắt theo mục *Sau khi tắt máy thì*: **UPS trước, ổ cắm sau**. Tắt UPS làm mạch ESP32
+   chết theo nên sau đó không ra lệnh cho UPS được nữa; ổ cắm thì vẫn tắt được vì có điện
+   và WiFi riêng.
+
+> ⚠️ **Máy không tắt trong hạn thì chuỗi HUỶ, không cắt điện**, và gửi thông báo. Một cái
+> PC chạy tiếp thì hơn hẳn một cái PC bị rút phích giữa chừng — thường là có hộp thoại
+> "lưu file?" đang chặn tắt máy.
+>
+> Chuỗi cũng dừng khi chưa khai báo IP: không đo được thì không có cách nào biết lúc nào
+> an toàn, nên nó gửi lệnh tắt rồi dừng chứ không đoán.
+
+Hạn chờ bị ép tối thiểu 30 giây, và thuộc tính của entity hiện **con số sẽ dùng** chứ
+không phải con số đã nhập.
+
 **Chiều tắt** thì Wake-on-LAN không làm được, và Windows không nhận lệnh tắt từ xa nếu
 không có gì đang nghe sẵn. Hai đường thực tế:
 
 - **HASS.Agent** — ứng dụng Windows, nói chuyện qua MQTT. Cho luôn `button` tắt máy, ngủ,
-  khoá màn hình, cộng thêm cảm biến CPU/RAM. Hợp nếu đã có broker MQTT trong nhà.
+  khoá màn hình, cộng thêm cảm biến CPU/RAM. Hợp nếu đã có broker MQTT trong nhà. Nhớ cài
+  cả **satellite service**: bản tray chỉ sống khi có người đăng nhập, không có service thì
+  lúc máy đang ở màn hình khoá sẽ không ai nhận lệnh tắt.
 - **OpenSSH Server** — tính năng có sẵn của Windows, không phải cài thêm phần mềm ngoài.
   Bật nó, tạo khoá, rồi một `shell_command` trong HA chạy `ssh user@máy "shutdown /s /t 0"`,
   bọc lại thành `script.tat_pc` và chọn script đó ở ô *Cách TẮT máy*.

@@ -91,6 +91,12 @@ DEFAULT_CONFIG = {
     "pc_ip": "",             # IP tinh, de do xem may con song
     "pc_port": 445,          # cong TCP de do; 445 = SMB, Windows luon mo
     "pc_off_entity": "",     # entity kich hoat de TAT may
+    # --- Chuoi: tat PC roi moi cat dien ---
+    # Cat dien giua luc Windows dang ghi dia thi hong file he thong, nen phai
+    # doi den khi may that su khong con tra loi. Xem button.py.
+    "seq_wait": 180,         # giay cho may tat, het han thi BO CUOC chu khong cat
+    "seq_grace": 20,         # giay cho them sau khi may ngung tra loi
+    "seq_cut": "none",       # none | ups | plug | both
 }
 
 

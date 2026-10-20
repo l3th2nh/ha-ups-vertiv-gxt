@@ -18,7 +18,7 @@
 // Ky tu xuong dong cho hop thoai confirm. Viet bang fromCharCode vi chuoi
 // escape tung bi cong cu ghi file bien thanh xuong dong THAT, lam vo cu phap.
 const BR = String.fromCharCode(10);
-const UPS_CARD_VERSION = '4.13.0';
+const UPS_CARD_VERSION = '4.14.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -1144,6 +1144,9 @@ class UpsPanelCard extends HTMLElement {
     $('set-pc-port').value = c.pc_port ?? 445;
     this._fillSelect($('set-pc-off'), this._targetChoices(),
       c.pc_off_entity || '', '— không tắt được —');
+    $('set-seq-cut').value = c.seq_cut || 'none';
+    $('set-seq-wait').value = c.seq_wait ?? 180;
+    $('set-seq-grace').value = c.seq_grace ?? 20;
     this._paintPcWarn();
 
     const targets = this._targetChoices();
@@ -1201,6 +1204,9 @@ class UpsPanelCard extends HTMLElement {
       pc_ip: $('set-pc-ip').value.trim(),
       pc_port: Number($('set-pc-port').value) || 445,
       pc_off_entity: $('set-pc-off').value,
+      seq_cut: $('set-seq-cut').value,
+      seq_wait: Math.max(30, Number($('set-seq-wait').value) || 180),
+      seq_grace: Math.max(0, Number($('set-seq-grace').value) || 0),
       ...this._collectBinds(),
     };
   }
@@ -1396,6 +1402,11 @@ class UpsPanelCard extends HTMLElement {
         .row.danger .sw input:checked + .sl { background:rgba(244,67,54,.45); }
         .row.danger .sw input:checked + .sl::before { background:#f44336; }
         .hint.alert { color:#c62828; font-weight:600; }
+        .btn-seq { width:100%; margin-top:6px; padding:10px 14px; border:none;
+                   border-radius:8px; background:#c62828; color:#fff;
+                   font-family:inherit; font-size:.86rem; font-weight:600;
+                   cursor:pointer; }
+        .btn-seq:disabled { opacity:.5; cursor:default; }
 
         /* --- gan nut vat ly --- */
         .bind { border:1px solid var(--divider-color); border-radius:8px;
@@ -1650,6 +1661,15 @@ class UpsPanelCard extends HTMLElement {
             </div>
             <label class="sw"><input type="checkbox" id="ctl-pc"><span class="sl"></span></label>
           </div>
+          <div class="row danger" id="ctl-seq-row">
+            <div style="flex:1 1 auto">
+              <div class="lb">Tắt PC rồi cắt điện</div>
+              <div class="hint" id="ctl-seq-hint">Gửi lệnh tắt máy, đợi đến khi máy
+                thật sự im, rồi mới cắt điện. Máy không tắt trong hạn thì
+                <b>huỷ, không cắt</b>.</div>
+              <button class="btn-seq" id="btn-seq">Tắt PC rồi cắt điện</button>
+            </div>
+          </div>
           <div class="hint ctl-note" id="ctl-msg"></div>
 
           <div class="sec">Đo tiêu thụ điện</div>
@@ -1707,6 +1727,32 @@ class UpsPanelCard extends HTMLElement {
                 script hoặc nút đã làm việc đó. Bỏ trống thì nút chỉ bật được.</div>
             </div>
             <select id="set-pc-off"></select>
+          </div>
+          <div class="row">
+            <div>
+              <div class="lb">Sau khi tắt máy thì</div>
+              <div class="hint">Chỉ chạy khi bấm nút <b>Tắt PC rồi cắt điện</b>.
+                Cắt UPS trước, ổ cắm sau — vì tắt UPS làm mạch ESP32 chết theo nên
+                sau đó không ra lệnh cho UPS được nữa, còn ổ cắm thì vẫn tắt được.</div>
+            </div>
+            <select id="set-seq-cut">
+              <option value="none">Không cắt gì</option>
+              <option value="ups">Tắt UPS</option>
+              <option value="plug">Cắt ổ cắm</option>
+              <option value="both">Tắt UPS rồi cắt ổ cắm</option>
+            </select>
+          </div>
+          <div class="row">
+            <div class="lb">Chờ máy tắt tối đa (giây)</div>
+            <input type="number" id="set-seq-wait" min="30" max="900" step="10" style="width:84px">
+          </div>
+          <div class="row">
+            <div>
+              <div class="lb">Chờ thêm sau khi máy im (giây)</div>
+              <div class="hint">Máy ngừng trả lời mạng là Windows đã vào giai đoạn
+                cuối, nhưng chưa chắc đã ghi xong đĩa.</div>
+            </div>
+            <input type="number" id="set-seq-grace" min="0" max="300" step="5" style="width:84px">
           </div>
           <div class="hint" id="pc-warn" style="display:none"></div>
 
@@ -1867,6 +1913,7 @@ class UpsPanelCard extends HTMLElement {
     for (const id of ['set-pc-mac', 'set-pc-ip']) {
       $(id).addEventListener('input', () => this._paintPcWarn());
     }
+    $('btn-seq').addEventListener('click', () => this._pressShutdownAll());
     $('ctl-pc').addEventListener('change', (ev) => {
       const on = ev.target.checked;
       if (!on) {
@@ -2103,6 +2150,29 @@ class UpsPanelCard extends HTMLElement {
    *  KHÔNG tự đổi ô tick: trạng thái thật do thiết bị công bố sau khi UPS xác
    *  nhận bằng QFLAG. Nếu UPS từ chối, ô tick sẽ tự quay về đúng thực tế.
    */
+  /** Chạy chuỗi tắt máy rồi cắt điện. Hỏi lại vì nó cắt điện thật. */
+  async _pressShutdownAll() {
+    const msg = this.shadowRoot.getElementById('ctl-msg');
+    const eid = 'button.ups_vertiv_shutdown_all';
+    if (!this._hass || !this._hass.states[eid]) {
+      msg.innerHTML = `Không tìm thấy <code>${eid}</code>. Tải lại tích hợp `
+        + 'UPS Vertiv rồi <b>Ctrl+F5</b>.';
+      return;
+    }
+    const cut = (this._cfg || {}).seq_cut || 'none';
+    const what = { ups: 'tắt UPS', plug: 'cắt ổ cắm',
+                   both: 'tắt UPS rồi cắt ổ cắm' }[cut] || 'KHÔNG cắt gì';
+    if (!confirm('Sẽ gửi lệnh TẮT MÁY TÍNH, đợi máy tắt hẳn, rồi ' + what + '.'
+        + BR + BR + 'Việc đang làm dở mà chưa lưu sẽ mất. Chắc chắn chạy?')) return;
+    try {
+      await this._hass.callService('button', 'press', { entity_id: eid });
+      msg.textContent = 'Đã bắt đầu. Đang đợi máy tắt — sẽ có thông báo khi xong, '
+        + 'hoặc khi phải huỷ vì máy không chịu tắt.';
+    } catch (e) {
+      msg.textContent = 'Không chạy được: ' + (e.message || e);
+    }
+  }
+
   async _toggleSwitch(key, on, label, explicitId, waitMs) {
     const msg = this.shadowRoot.getElementById('ctl-msg');
     const eid = explicitId || this._id('switch', key);

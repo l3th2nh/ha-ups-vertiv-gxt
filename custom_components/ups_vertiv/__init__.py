@@ -29,7 +29,7 @@ from .alerts import DEFAULT_CONFIG, UpsAlertEngine, resolve_entities, send_notif
 from .buttons import UpsButtonEngine
 
 # Platform do integration nay tu tao entity
-PLATFORMS = ["switch"]
+PLATFORMS = ["switch", "button"]
 from .const import (
     CARD_JS,
     DOMAIN,
