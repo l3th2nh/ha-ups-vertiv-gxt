@@ -392,6 +392,18 @@ không phải con số đã nhập.
 > | `homeassistant.turn_on button.x` | 0 entity đổi | không gì cả |
 > | `button.press button.x` | 1 entity đổi | lệnh chạy thật |
 >
+> **Cùng họ với nó: gọi dịch vụ lên một entity `unavailable`.** Home Assistant cũng trả về
+> thành công, 0 entity đổi, không lỗi. Nên `async_activate()` tự kiểm tra entity còn sống
+> trước khi gọi, và trả `False` kèm log rõ ràng nếu không. Panel cũng cảnh báo ngay trên
+> form khi entity đích đã chết.
+>
+> Lưu ý `unknown` là **bình thường** với domain `button` (chưa bấm lần nào) — chỉ
+> `unavailable` mới là chết.
+>
+> ⚠️ Đổi `Id` của một lệnh trong `commands.json` của HASS.Agent là **đổi `unique_id`**:
+> Home Assistant sinh ra entity MỚI (`..._shutdown_2`) và bỏ rơi cái cũ thành
+> `unavailable` vĩnh viễn. Sửa file đó thì **giữ nguyên `Id`**.
+>
 > Nên mọi chỗ "kích hoạt một entity" trong integration đều đi qua `activate_service()`
 > trong [buttons.py](custom_components/ups_vertiv/buttons.py): `button` và `input_button`
 > thì gọi `press`, còn lại gọi `homeassistant.turn_on`. Cũng vì thế `button` không nhận

@@ -111,10 +111,8 @@ class PcPowerSwitch(SwitchEntity):
                 "tat duoc. Chon mot script/button lam viec tat trong Cai dat."
             )
             return
-        if self.hass.states.get(target) is None:
-            _LOGGER.warning("PC: entity tat may %s khong ton tai", target)
-            return
+        # async_activate tu kiem tra entity con song va chon dung dich vu:
+        # muc tieu thuong la mot `button` cua HASS.Agent, ma
+        # homeassistant.turn_on khong bam duoc button.
         _LOGGER.info("PC: tat may bang %s", target)
-        # Dung async_activate: muc tieu thuong la mot `button` cua HASS.Agent,
-        # ma homeassistant.turn_on khong bam duoc button.
         await async_activate(self.hass, target)

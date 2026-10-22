@@ -18,7 +18,7 @@
 // Ky tu xuong dong cho hop thoai confirm. Viet bang fromCharCode vi chuoi
 // escape tung bi cong cu ghi file bien thanh xuong dong THAT, lam vo cu phap.
 const BR = String.fromCharCode(10);
-const UPS_CARD_VERSION = '4.14.1';
+const UPS_CARD_VERSION = '4.14.2';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -76,8 +76,9 @@ const BTN_ACTIONS = [
 // Domain gan duoc vao o "thiet bi khac". Co ca scene va script vi nhieu thiet
 // bi hong ngoai khong vao HA duoc duoi dang entity rieng - duong duy nhat la
 // mot canh tap-to-run cua hang.
-const TARGET_DOMAINS = ['fan', 'switch', 'light', 'climate', 'media_player',
-  'cover', 'humidifier', 'vacuum', 'input_boolean', 'scene', 'script', 'automation'];
+const TARGET_DOMAINS = ['button', 'input_button', 'fan', 'switch', 'light', 'climate',
+  'media_player', 'cover', 'humidifier', 'vacuum', 'input_boolean', 'scene', 'script',
+  'automation'];
 
 const NUM_SLOTS = 3;
 
@@ -531,10 +532,33 @@ class UpsPanelCard extends HTMLElement {
     }
     if (mac && !ip) msgs.push('Có MAC nhưng chưa có IP — sẽ bật được nhưng không đọc được trạng thái.');
     if (ip && !mac) msgs.push('Có IP nhưng chưa có MAC — sẽ đọc được trạng thái nhưng không bật được.');
+    msgs.push(...this._deadTarget($('set-pc-off').value, 'Cách TẮT máy'));
 
     el.className = msgs.length ? 'hint alert' : 'hint';
     el.style.display = msgs.length ? '' : 'none';
     el.textContent = msgs.join(' ');
+  }
+
+  /**
+   * Entity đích đã chọn nhưng không dùng được -> trả về câu cảnh báo.
+   *
+   * Gọi dịch vụ lên một entity `unavailable` thì Home Assistant vẫn báo thành
+   * công, 0 entity đổi trạng thái, không một thông báo lỗi nào. Đã gặp thật:
+   * entity bị bỏ rơi sau khi đổi ID, người dùng bấm mãi không hiểu vì sao.
+   *
+   * `unknown` thì BÌNH THƯỜNG với domain button — chưa bấm lần nào.
+   */
+  _deadTarget(eid, label) {
+    if (!eid || !this._hass) return [];
+    const st = this._hass.states[eid];
+    if (!st) {
+      return [`${label}: không còn entity <${eid}> trong Home Assistant.`];
+    }
+    if (st.state === 'unavailable') {
+      return [`${label}: <${eid}> đang unavailable — bấm sẽ KHÔNG có gì `
+        + 'xảy ra và cũng không báo lỗi. Kiểm tra thiết bị cung cấp entity này.'];
+    }
+    return [];
   }
 
   /** Danh sách thiết bị gán được vào ô "thiết bị khác". */
@@ -572,6 +596,7 @@ class UpsPanelCard extends HTMLElement {
     if (needTarget && !target) {
       msgs.push('Hành động này cần một thiết bị đích — chọn ở ô "Thiết bị khác".');
     }
+    if (needTarget) msgs.push(...this._deadTarget(target, 'Thiết bị khác'));
     // Hai hành động cùng kiểu bấm thì cả hai cùng nổ, gần như luôn là nhầm
     if (acts[0] && acts[1] && presses[0] === presses[1]) {
       msgs.push('Hai hành động đang dùng CÙNG một kiểu bấm nên sẽ chạy cả hai '

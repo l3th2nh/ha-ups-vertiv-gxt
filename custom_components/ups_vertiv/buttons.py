@@ -96,13 +96,34 @@ def is_press_only(entity_id: str) -> bool:
     return entity_id.split(".")[0] in PRESS_DOMAINS
 
 
-async def async_activate(hass: HomeAssistant, entity_id: str) -> None:
-    """Kich hoat entity bang dung dich vu cua domain do."""
+async def async_activate(hass: HomeAssistant, entity_id: str) -> bool:
+    """Kich hoat entity bang dung dich vu cua domain do. True = da gui duoc.
+
+    Phai tu kiem tra entity con song khong. Goi dich vu len mot entity dang
+    `unavailable` thi HA van tra ve thanh cong, 0 entity doi trang thai, khong
+    mot thong bao loi nao - lenh bien mat y het truong hop homeassistant.turn_on
+    goi len button. Da gap that: entity dich bi mo coi sau khi doi unique_id,
+    nguoi dung bam mai khong hieu vi sao khong co gi xay ra.
+
+    Luu y: `unknown` la BINH THUONG voi domain button (chua bam lan nao), chi
+    `unavailable` moi la chet.
+    """
+    st = hass.states.get(entity_id)
+    if st is None:
+        _LOGGER.warning("UPS: %s khong ton tai - bo qua", entity_id)
+        return False
+    if st.state == "unavailable":
+        _LOGGER.warning(
+            "UPS: %s dang UNAVAILABLE - khong gui lenh. Thiet bi cung cap entity "
+            "nay dang mat ket noi, hoac entity da bi bo roi sau khi doi ten/ID.",
+            entity_id)
+        return False
     domain, service = activate_service(entity_id)
     _LOGGER.info("UPS: kich hoat %s bang %s.%s", entity_id, domain, service)
     await hass.services.async_call(
         domain, service, {"entity_id": entity_id}, blocking=False
     )
+    return True
 
 
 def find_by_suffix(hass: HomeAssistant, domain: str, suffix: str) -> str | None:

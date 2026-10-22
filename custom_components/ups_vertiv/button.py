@@ -112,7 +112,14 @@ class ShutdownAllButton(ButtonEntity):
             return
 
         _LOGGER.info("UPS: chuoi tat may - buoc 1, kich hoat %s", off_entity)
-        await async_activate(self.hass, off_entity)
+        if not await async_activate(self.hass, off_entity):
+            # Khong gui duoc lenh tat thi cho 180 giay cung vo ich. Dung ngay va
+            # noi ro, thay vi de nguoi dung tuong chuoi dang chay.
+            await self._notify(
+                "Không gửi được lệnh tắt máy",
+                f"Entity {off_entity} không tồn tại hoặc đang unavailable. "
+                "Chuỗi dừng lại và KHÔNG cắt điện.", "#f44336")
+            return
 
         if not ip:
             # Khong do duoc thi khong co cach nao biet may tat chua -> dung lai.
