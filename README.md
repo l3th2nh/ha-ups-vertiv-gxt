@@ -383,6 +383,20 @@ Entity `button.ups_vertiv_shutdown_all` chạy cả chuỗi:
 Hạn chờ bị ép tối thiểu 30 giây, và thuộc tính của entity hiện **con số sẽ dùng** chứ
 không phải con số đã nhập.
 
+> ⚠️ **`homeassistant.turn_on` KHÔNG bấm được một `button`.** Home Assistant trả về
+> thành công, **0 entity đổi trạng thái**, không một thông báo lỗi nào — lệnh biến mất
+> trong im lặng. Đo trên HA 2026.10.1:
+>
+> | Gọi | Kết quả | Thiết bị nhận được |
+> |---|---|---|
+> | `homeassistant.turn_on button.x` | 0 entity đổi | không gì cả |
+> | `button.press button.x` | 1 entity đổi | lệnh chạy thật |
+>
+> Nên mọi chỗ "kích hoạt một entity" trong integration đều đi qua `activate_service()`
+> trong [buttons.py](custom_components/ups_vertiv/buttons.py): `button` và `input_button`
+> thì gọi `press`, còn lại gọi `homeassistant.turn_on`. Cũng vì thế `button` không nhận
+> hành động *tắt*/*đảo* — panel cảnh báo ngay trên form thay vì để lệnh rơi vào im lặng.
+
 **Chiều tắt** thì Wake-on-LAN không làm được, và Windows không nhận lệnh tắt từ xa nếu
 không có gì đang nghe sẵn. Hai đường thực tế:
 

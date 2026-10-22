@@ -74,6 +74,37 @@ NUM_BUTTONS = 3
 SLOTS = ("", "2")
 
 
+# Domain chi "kich hoat" duoc chu khong co turn_on / turn_off.
+# homeassistant.turn_on KHONG chay voi `button`: HA tra ve THANH CONG, 0 entity
+# doi trang thai, khong mot thong bao loi nao - lenh bien mat trong im lang.
+# Da do bang thuc nghiem tren HA 2026.10.1:
+#    homeassistant.turn_on  button.x  -> 0 entity doi, service khong nhan duoc gi
+#    button.press           button.x  -> 1 entity doi, service chay lenh
+PRESS_DOMAINS = {"button": "press", "input_button": "press"}
+
+
+def activate_service(entity_id: str) -> tuple[str, str]:
+    """Dich vu dung de LAM CHO NO XAY RA voi entity nay."""
+    domain = entity_id.split(".")[0]
+    if domain in PRESS_DOMAINS:
+        return domain, PRESS_DOMAINS[domain]
+    return "homeassistant", "turn_on"
+
+
+def is_press_only(entity_id: str) -> bool:
+    """Entity chi bam duoc, khong co khai niem bat/tat."""
+    return entity_id.split(".")[0] in PRESS_DOMAINS
+
+
+async def async_activate(hass: HomeAssistant, entity_id: str) -> None:
+    """Kich hoat entity bang dung dich vu cua domain do."""
+    domain, service = activate_service(entity_id)
+    _LOGGER.info("UPS: kich hoat %s bang %s.%s", entity_id, domain, service)
+    await hass.services.async_call(
+        domain, service, {"entity_id": entity_id}, blocking=False
+    )
+
+
 def find_by_suffix(hass: HomeAssistant, domain: str, suffix: str) -> str | None:
     """Tim entity theo hau to trong mot domain.
 
@@ -200,6 +231,17 @@ class UpsButtonEngine:
         if self.hass.states.get(target) is None:
             _LOGGER.warning("UPS: nut %s muon %s nhung %s khong ton tai",
                             entity_id, action, target)
+            return
+        # Entity chi bam duoc (button) thi khong co khai niem tat/dao. Bao ro
+        # thay vi goi mot dich vu khong ton tai roi im lang khong lam gi.
+        if is_press_only(target) and service != "turn_on":
+            _LOGGER.warning(
+                "UPS: nut %s muon '%s' tren %s, nhung %s chi BAM duoc chu khong "
+                "tat/dao duoc. Doi hanh dong sang kieu bat/kich hoat.",
+                entity_id, action, target, target)
+            return
+        if service == "turn_on":
+            await async_activate(self.hass, target)
             return
         _LOGGER.info("UPS: nut %s (%s) -> homeassistant.%s tren %s",
                      entity_id, kind or "bam", service, target)

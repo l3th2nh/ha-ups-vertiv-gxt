@@ -23,6 +23,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .alerts import DEFAULT_CONFIG
+from .buttons import async_activate
 from .const import DOMAIN
 from .pc import DEFAULT_PROBE_PORT, async_alive, async_wake, normalize_mac
 
@@ -114,6 +115,6 @@ class PcPowerSwitch(SwitchEntity):
             _LOGGER.warning("PC: entity tat may %s khong ton tai", target)
             return
         _LOGGER.info("PC: tat may bang %s", target)
-        await self.hass.services.async_call(
-            "homeassistant", "turn_on", {"entity_id": target}, blocking=False
-        )
+        # Dung async_activate: muc tieu thuong la mot `button` cua HASS.Agent,
+        # ma homeassistant.turn_on khong bam duoc button.
+        await async_activate(self.hass, target)

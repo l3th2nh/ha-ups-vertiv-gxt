@@ -24,7 +24,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .alerts import DEFAULT_CONFIG, send_notification
-from .buttons import UPS_POWER_SUFFIX, find_by_suffix
+from .buttons import UPS_POWER_SUFFIX, async_activate, find_by_suffix
 from .const import DOMAIN
 from .pc import DEFAULT_PROBE_PORT, async_alive
 
@@ -112,9 +112,7 @@ class ShutdownAllButton(ButtonEntity):
             return
 
         _LOGGER.info("UPS: chuoi tat may - buoc 1, kich hoat %s", off_entity)
-        await self.hass.services.async_call(
-            "homeassistant", "turn_on", {"entity_id": off_entity}, blocking=False
-        )
+        await async_activate(self.hass, off_entity)
 
         if not ip:
             # Khong do duoc thi khong co cach nao biet may tat chua -> dung lai.

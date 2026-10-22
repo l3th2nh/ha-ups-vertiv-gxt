@@ -18,7 +18,7 @@
 // Ky tu xuong dong cho hop thoai confirm. Viet bang fromCharCode vi chuoi
 // escape tung bi cong cu ghi file bien thanh xuong dong THAT, lam vo cu phap.
 const BR = String.fromCharCode(10);
-const UPS_CARD_VERSION = '4.14.0';
+const UPS_CARD_VERSION = '4.14.1';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -89,6 +89,9 @@ const BTN_DEFAULT_NAMES = ['Control UPS', 'Control Power plugin', 'Control Fan']
 const BTN_RISKY = ['plug_off', 'plug_toggle', 'ups_off', 'ups_toggle'];
 // Hanh dong can mot entity dich do nguoi dung tu chon
 const BTN_NEEDS_TARGET = ['target_on', 'target_off', 'target_toggle'];
+// Domain chi BAM duoc, khong co bat/tat. homeassistant.turn_on khong cham toi
+// duoc `button`: HA bao thanh cong, 0 entity doi, khong loi - lenh mat im lang.
+const PRESS_ONLY_DOMAINS = ['button', 'input_button'];
 
 // Moi tich hop dat ten kieu bam mot khac, nen chi dich cai nao biet
 const PRESS_LABEL = {
@@ -573,6 +576,13 @@ class UpsPanelCard extends HTMLElement {
     if (acts[0] && acts[1] && presses[0] === presses[1]) {
       msgs.push('Hai hành động đang dùng CÙNG một kiểu bấm nên sẽ chạy cả hai '
         + 'cùng lúc. Đặt hai kiểu bấm khác nhau (ví dụ một lần / hai lần).');
+    }
+    // Entity chỉ bấm được thì "tắt"/"đảo" không có nghĩa — và sẽ im lặng
+    // không làm gì, nên bắt ngay trên form.
+    if (target && PRESS_ONLY_DOMAINS.includes(target.split('.')[0])
+        && acts.some((a) => a === 'target_off' || a === 'target_toggle')) {
+      msgs.push(`<${target}> chỉ bấm được, không tắt/đảo được. Đổi hành động `
+        + 'sang "Bật / kích hoạt thiết bị khác".');
     }
     for (let k = 0; k < 2; k++) {
       if (BTN_RISKY.includes(acts[k]) && presses[k] === 'any') {
@@ -1722,7 +1732,10 @@ class UpsPanelCard extends HTMLElement {
           <div class="row">
             <div>
               <div class="lb">Cách TẮT máy</div>
-              <div class="hint">Wake-on-LAN chỉ đánh thức được, <b>không tắt được</b>.
+              <div class="hint">Nhận cả <code>button</code> (ví dụ nút tắt máy của
+                HASS.Agent), <code>script</code> hay <code>scene</code> — panel tự
+                chọn đúng dịch vụ cho từng loại.<br>
+                Wake-on-LAN chỉ đánh thức được, <b>không tắt được</b>.
                 Muốn tắt thì cần một thứ đang chạy sẵn trên máy nhận lệnh — chọn
                 script hoặc nút đã làm việc đó. Bỏ trống thì nút chỉ bật được.</div>
             </div>
