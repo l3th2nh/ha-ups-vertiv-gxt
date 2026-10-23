@@ -18,7 +18,7 @@
 // Ky tu xuong dong cho hop thoai confirm. Viet bang fromCharCode vi chuoi
 // escape tung bi cong cu ghi file bien thanh xuong dong THAT, lam vo cu phap.
 const BR = String.fromCharCode(10);
-const UPS_CARD_VERSION = '4.14.2';
+const UPS_CARD_VERSION = '4.15.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -1163,6 +1163,9 @@ class UpsPanelCard extends HTMLElement {
     $('set-shed').checked = !!c.shed;
     $('set-offline').checked = c.offline !== false;
     $('set-offline-after').value = c.offline_after ?? 3;
+    $('set-fault').checked = c.fault_alert !== false;
+    $('set-lowmains').checked = c.batt_low_mains !== false;
+    $('set-lowmains-after').value = c.batt_low_mains_after ?? 120;
     $('set-warn-at').value = c.batt_warn_at ?? 50;
     $('set-crit-at').value = c.batt_crit_at ?? 25;
 
@@ -1231,6 +1234,9 @@ class UpsPanelCard extends HTMLElement {
       shed: $('set-shed').checked,
       offline: $('set-offline').checked,
       offline_after: Number($('set-offline-after').value) || 3,
+      fault_alert: $('set-fault').checked,
+      batt_low_mains: $('set-lowmains').checked,
+      batt_low_mains_after: Math.max(5, Number($('set-lowmains-after').value) || 120),
       power_entity: $('set-pw-power').value,
       energy_entity: $('set-pw-energy').value,
       plug_entity: $('set-pw-plug').value,
@@ -1890,6 +1896,26 @@ class UpsPanelCard extends HTMLElement {
           <div class="row">
             <div class="lb">Pin xuống dưới <input type="number" id="set-crit-at" min="1" max="99"> % (sắp tự tắt máy)</div>
             <input type="checkbox" id="set-crit">
+          </div>
+          <div class="row">
+            <div>
+              <div class="lb">Pin vẫn dưới ngưỡng trên sau
+                <input type="number" id="set-lowmains-after" min="5" max="1440"> phút
+                <b>dù đang có điện lưới</b></div>
+              <div class="hint">Tức là sạc không lên. Cảnh báo pin ở trên chỉ chạy
+                lúc đang chạy pin, nên không bắt được tình huống này — UPS đứng im
+                với pin cạn mà vẫn hiện "Điện lưới". Phải chờ một khoảng vì ngay
+                sau khi có điện lại, pin thấp là bình thường.</div>
+            </div>
+            <input type="checkbox" id="set-lowmains">
+          </div>
+          <div class="row">
+            <div>
+              <div class="lb">UPS tự bật cờ lỗi</div>
+              <div class="hint">Lúc đó UPS có thể không dự phòng được gì, dù vẫn
+                hiện đang chạy điện lưới bình thường.</div>
+            </div>
+            <input type="checkbox" id="set-fault">
           </div>
           <div class="row">
             <div class="lb">UPS tự ngắt ổ cắm P1</div>

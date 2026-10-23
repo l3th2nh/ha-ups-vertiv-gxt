@@ -31,6 +31,7 @@ SUFFIX = {
     "runtime": ("sensor", "_runtime"),
     "load_power": ("sensor", "_load_power"),
     "status": ("sensor", "_status"),
+    "fault": ("binary_sensor", "_fault"),
 }
 
 DEFAULT_CONFIG = {
@@ -43,6 +44,15 @@ DEFAULT_CONFIG = {
     "batt_crit": True,
     "batt_crit_at": 25,
     "shed": True,
+    # Bao khi UPS tu bat co loi. Thieu canh bao nay thi mot su co nhu "pin xa
+    # sau, UPS chot loi" co the keo dai hang ngay ma khong ai biet.
+    "fault_alert": True,
+    # Bao khi pin thap DU DANG CO DIEN LUOI - tuc la sac khong len. Canh bao
+    # batt_crit chi chay luc dang chay pin, nen khong bat duoc truong hop nay.
+    # Phai cho mot khoang: ngay sau khi co dien lai, pin thap la BINH THUONG,
+    # no dang sac. Chi khi nam duoi nguong qua lau moi la hong.
+    "batt_low_mains": True,
+    "batt_low_mains_after": 120,   # phut
     # Bao khi CHINH MACH GIAM SAT chet. Day la kieu hong nguy hiem nhat:
     # he thong im lang va nguoi dung tuong minh van duoc bao ve.
     "offline": True,
@@ -220,6 +230,11 @@ class UpsAlertEngine:
         # Theo doi chinh mach giam sat con song khong
         self._offline_unsub = None
         self._offline_notified = False
+        # Co loi cua UPS: chi bao mot lan moi lan bat co
+        self._fault_notified = False
+        # Pin thap trong luc dang co dien luoi
+        self._lowmains_unsub = None
+        self._lowmains_notified = False
 
     @property
     def cfg(self) -> dict:
@@ -247,7 +262,7 @@ class UpsAlertEngine:
             st = self.hass.states.get(ents["on_battery"])
             if st and st.state in ("on", "off"):
                 self._last_on_batt = st.state == "on"
-        watch = [ents["on_battery"], ents["battery"], ents["outlet_p1"]]
+        watch = [ents["on_battery"], ents["battery"], ents["outlet_p1"], ents["fault"]]
         self._unsub = async_track_state_change_event(self.hass, watch, self._on_change)
         _LOGGER.info("UPS: đang theo dõi cảnh báo trên %s", ", ".join(watch))
 
@@ -256,6 +271,31 @@ class UpsAlertEngine:
             self._unsub()
             self._unsub = None
         self._cancel_offline_timer()
+        self._cancel_lowmains_timer()
+
+    def _cancel_lowmains_timer(self) -> None:
+        if self._lowmains_unsub:
+            self._lowmains_unsub()
+            self._lowmains_unsub = None
+
+    async def _lowmains_timeout(self, _now) -> None:
+        """Pin van thap sau thoi gian an han, du dang co dien luoi -> bao."""
+        self._lowmains_unsub = None
+        self._lowmains_notified = True
+        cfg = self.cfg
+        pin = _num(self.hass, self._ents.get("battery"))
+        mins = int(cfg.get("batt_low_mains_after", 120))
+        _LOGGER.warning("UPS: pin %s%% suot %s phut du dang co dien luoi", pin, mins)
+        if not cfg.get("batt_low_mains"):
+            return
+        await send_notification(
+            self.hass, cfg.get("service", ""),
+            f"🔌 Pin UPS vẫn {pin:.0f}% dù đang có điện lưới"
+            if pin is not None else "🔌 Pin UPS thấp dù đang có điện lưới",
+            f"Đã {mins} phút mà pin không lên. Sạc có thể không hoạt động, hoặc "
+            "UPS đang chốt lỗi ắc quy. Lúc này UPS KHÔNG dự phòng được gì.",
+            "ups_sac", "#ff9800",
+        )
 
     def _cancel_offline_timer(self) -> None:
         if self._offline_unsub:
@@ -376,10 +416,66 @@ class UpsAlertEngine:
             return
 
         # ------------------------------------------------------- pin yếu ---
+        # ------------------------------------------- UPS tu bat co loi ---
+        if eid == e.get("fault"):
+            if new.state == "on" and not self._fault_notified:
+                self._fault_notified = True
+                _LOGGER.warning("UPS: bat co LOI")
+                if cfg.get("fault_alert"):
+                    await send_notification(
+                        self.hass, svc,
+                        "⚠️ UPS đang báo lỗi",
+                        f"UPS vừa bật cờ lỗi. Pin {fmt(pin, '%')}, dự phòng "
+                        f"{fmt(runtime, 'phút')}. Kiểm tra màn hình trên máy — "
+                        "lúc này nó có thể KHÔNG dự phòng được gì.",
+                        "ups_loi", "#f44336",
+                    )
+            elif new.state == "off" and self._fault_notified:
+                self._fault_notified = False
+                _LOGGER.info("UPS: da het loi")
+                if cfg.get("fault_alert"):
+                    await send_notification(
+                        self.hass, svc,
+                        "✅ UPS hết báo lỗi",
+                        f"Cờ lỗi đã tắt. Pin {fmt(pin, '%')}, dự phòng "
+                        f"{fmt(runtime, 'phút')}.",
+                        "ups_loi", "#4caf50",
+                    )
+            return
+
         if eid == e.get("battery"):
             on_batt = self.hass.states.get(e.get("on_battery", ""))
+            on_mains = bool(on_batt) and on_batt.state == "off"
+            crit_now = float(cfg.get("batt_crit_at", 25))
+
+            # --- pin thap DU DANG CO dien luoi = sac khong len ---
+            # Khong bao ngay: vua co dien lai thi pin thap la binh thuong, no
+            # dang sac. Chi khi nam duoi nguong qua lau moi la co van de.
+            if on_mains and pin is not None:
+                if pin <= crit_now:
+                    if self._lowmains_unsub is None and not self._lowmains_notified:
+                        delay = max(1, int(cfg.get("batt_low_mains_after", 120))) * 60
+                        self._lowmains_unsub = async_call_later(
+                            self.hass, delay, self._lowmains_timeout
+                        )
+                        _LOGGER.debug("UPS: pin %s%% tren dien luoi, cho %ss", pin, delay)
+                else:
+                    self._cancel_lowmains_timer()
+                    if self._lowmains_notified:
+                        self._lowmains_notified = False
+                        _LOGGER.info("UPS: pin da sac len tren %s%%", crit_now)
+                        if cfg.get("batt_low_mains"):
+                            await send_notification(
+                                self.hass, svc,
+                                f"✅ Pin UPS đã sạc lên {pin:.0f}%",
+                                f"Dự phòng khoảng {fmt(runtime, 'phút')}.",
+                                "ups_sac", "#4caf50",
+                            )
+
             if not on_batt or on_batt.state != "on" or pin is None:
                 return
+            # Dang chay pin thi bo dem "sac khong len" khong con y nghia
+            self._cancel_lowmains_timer()
 
             crit_at = float(cfg.get("batt_crit_at", 25))
             warn_at = float(cfg.get("batt_warn_at", 50))

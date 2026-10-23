@@ -291,8 +291,23 @@ thì entity thành `unavailable` và card hiện dải cảnh báo — nhưng ca
 Panel → tab **Cài đặt** → chọn `notify.mobile_app_…` → **Lưu**. Bấm **Gửi thử** để kiểm
 tra ngay, không phải chờ mất điện thật.
 
-Báo 5 tình huống: mất điện · pin dưới ngưỡng cảnh báo · pin dưới ngưỡng nguy cấp ·
-UPS ngắt ổ P1 · có điện lại.
+Báo 7 tình huống: mất điện · pin dưới ngưỡng cảnh báo · pin dưới ngưỡng nguy cấp ·
+UPS ngắt ổ P1 · có điện lại · **UPS tự bật cờ lỗi** · **pin vẫn thấp dù đang có điện lưới**.
+
+> ⚠️ Hai cảnh báo cuối sinh ra từ một sự cố thật. Cảnh báo pin ở trên có dòng này:
+>
+> ```python
+> if not on_batt or on_batt.state != "on" or pin is None:
+>     return
+> ```
+>
+> — tức là **chỉ chạy khi đang chạy pin**. Hôm 22/10/2026 ắc quy nằm ở 0% suốt **11 tiếng**
+> trong lúc UPS vẫn hiện `Line` và bật cờ lỗi, và hệ thống **không gửi gì cả**: không mất
+> điện nên không có cảnh báo nào kích hoạt. Người dùng chỉ phát hiện khi nghe tiếng tít tít.
+>
+> `batt_low_mains` phải **chờ một khoảng** (mặc định 120 phút) chứ không báo ngay: ngay sau
+> khi có điện lại, pin thấp là bình thường — nó đang sạc. Đo thực tế trên máy này, bộ đếm
+> phần trăm đi lên 1% mỗi 143 giây, nên qua ngưỡng 25% mất khoảng một tiếng.
 
 Engine chạy nền trong integration, bám `async_track_state_change_event` nên phản ứng tức
 thì. Cảnh báo pin chỉ bắn **một lần cho mỗi lần mất điện**, reset khi có điện lại.
