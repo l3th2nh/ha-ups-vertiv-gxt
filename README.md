@@ -449,6 +449,15 @@ tắt. Một nút một hành động thì muốn vừa bật vừa tắt phải
 Hành động gán được: bật / tắt / đảo **UPS** (`SON` / `SOFF`), bật / tắt / đảo **ổ cắm**,
 và bật / tắt / đảo **một thiết bị khác** tự chọn.
 
+> ⚠️ **Muốn gán nút bật/tắt máy tính thì chọn `switch.ups_vertiv_pc_power`, đừng chọn nút
+> tắt máy của HASS.Agent.** Entity của HASS.Agent do chính cái máy đó công bố qua MQTT,
+> nên nó **biến mất khi máy tắt** — đúng lúc cần nó để bật máy. Đo thực tế: nút đó ở
+> `unavailable` suốt 18 tiếng trong khi máy tắt, còn `switch.ups_vertiv_pc_power` vẫn sống
+> và chỉ báo `off`.
+>
+> Công tắc PC xử lý được cả hai chiều: bật thì gửi Wake-on-LAN (chạy khi máy đang tắt),
+> tắt thì bấm nút của HASS.Agent (chạy khi máy đang bật).
+
 Ô *thiết bị khác* nhận `fan`, `switch`, `light`, `climate`, `media_player`, `cover`,
 `script`, và cả **`scene`** — vì nhiều thiết bị hồng ngoại không vào được HA dưới dạng
 entity riêng, đường duy nhất là một cảnh *tap-to-run* của hãng. Lệnh gửi qua domain

@@ -87,7 +87,7 @@ DEFAULT_CONFIG = {
     "btn2_action": "",
     "btn2_press2": "any",
     "btn2_action2": "",
-    "btn3_name": "Control Fan",
+    "btn3_name": "Control PC",
     "btn3_entity": "",
     "btn3_target": "",
     "btn3_press": "any",

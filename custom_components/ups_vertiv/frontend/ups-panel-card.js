@@ -18,7 +18,7 @@
 // Ky tu xuong dong cho hop thoai confirm. Viet bang fromCharCode vi chuoi
 // escape tung bi cong cu ghi file bien thanh xuong dong THAT, lam vo cu phap.
 const BR = String.fromCharCode(10);
-const UPS_CARD_VERSION = '4.15.0';
+const UPS_CARD_VERSION = '4.16.0';
 
 // Firmware chỉ đẩy MÃ (alias) tiếng Anh — toàn bộ phần chữ tiếng Việt nằm ở đây.
 // Muốn đổi câu chữ chỉ sửa một chỗ này, không phải nạp lại firmware.
@@ -84,7 +84,7 @@ const NUM_SLOTS = 3;
 
 // Phai khop DEFAULT_CONFIG trong alerts.py. Xoá trắng ô tên thì quay về tên
 // mặc định có nghĩa, chứ không rơi xuống "Nút 3" vô nghĩa.
-const BTN_DEFAULT_NAMES = ['Control UPS', 'Control Power plugin', 'Control Fan'];
+const BTN_DEFAULT_NAMES = ['Control UPS', 'Control Power plugin', 'Control PC'];
 
 // Hanh dong lam mat dien: de kieu bam 'any' thi cham nhe cung dinh
 const BTN_RISKY = ['plug_off', 'plug_toggle', 'ups_off', 'ups_toggle'];
@@ -1821,6 +1821,9 @@ class UpsPanelCard extends HTMLElement {
               <select id="set-btn1-act2"></select></div>
             <div class="f" id="btn1-target-row" style="display:none">
               <span>Thiết bị khác</span><select id="set-btn1-target"></select></div>
+            <div class="hint" style="margin:4px 0 0 86px">Muốn bật/tắt máy tính thì
+              chọn <code>switch.…_pc_power</code> — <b>đừng</b> chọn nút tắt máy của
+              HASS.Agent: nút đó biến mất khi máy đang tắt, tức là đúng lúc cần bật.</div>
             <div class="learn-row">
               <button class="learn" id="btn1-learn">Bấm thử để dò</button>
               <div class="learn-msg" id="btn1-learn-msg"></div>
@@ -1838,6 +1841,9 @@ class UpsPanelCard extends HTMLElement {
               <select id="set-btn2-act2"></select></div>
             <div class="f" id="btn2-target-row" style="display:none">
               <span>Thiết bị khác</span><select id="set-btn2-target"></select></div>
+            <div class="hint" style="margin:4px 0 0 86px">Muốn bật/tắt máy tính thì
+              chọn <code>switch.…_pc_power</code> — <b>đừng</b> chọn nút tắt máy của
+              HASS.Agent: nút đó biến mất khi máy đang tắt, tức là đúng lúc cần bật.</div>
             <div class="learn-row">
               <button class="learn" id="btn2-learn">Bấm thử để dò</button>
               <div class="learn-msg" id="btn2-learn-msg"></div>
@@ -1855,6 +1861,9 @@ class UpsPanelCard extends HTMLElement {
               <select id="set-btn3-act2"></select></div>
             <div class="f" id="btn3-target-row" style="display:none">
               <span>Thiết bị khác</span><select id="set-btn3-target"></select></div>
+            <div class="hint" style="margin:4px 0 0 86px">Muốn bật/tắt máy tính thì
+              chọn <code>switch.…_pc_power</code> — <b>đừng</b> chọn nút tắt máy của
+              HASS.Agent: nút đó biến mất khi máy đang tắt, tức là đúng lúc cần bật.</div>
             <div class="learn-row">
               <button class="learn" id="btn3-learn">Bấm thử để dò</button>
               <div class="learn-msg" id="btn3-learn-msg"></div>
